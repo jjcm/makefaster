@@ -22,7 +22,11 @@
   }
 
   function applyTexture(i) {
-    document.documentElement.style.setProperty("--texture-image", 'url("' + TEXTURES[i] + '")');
+    // Resolve against the document base: browsers resolve relative url()s in
+    // custom properties against the stylesheet that consumes them, which
+    // would point inside css/ here.
+    var abs = new URL(TEXTURES[i], document.baseURI).href;
+    document.documentElement.style.setProperty("--texture-image", 'url("' + abs + '")');
   }
 
   applyTexture(textureIndex);
@@ -125,7 +129,15 @@
 
     var nums = [];
     for (var p = 1; p <= pageCount; p++) {
-      if (p === 1 || p === pageCount || Math.abs(p - page) <= 1) nums.push(p);
+      if (
+        p === 1 ||
+        p === pageCount ||
+        Math.abs(p - page) <= 1 ||
+        (page <= 2 && p <= 3) ||
+        (page >= pageCount - 1 && p >= pageCount - 2)
+      ) {
+        nums.push(p);
+      }
     }
     var last = 0;
     nums.forEach(function (p) {

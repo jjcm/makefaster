@@ -246,11 +246,11 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .hero h1 {
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: clamp(44px, 6.2vw, 78px);
+  font-size: clamp(40px, 6vw, 76px);
   line-height: 1.06;
   letter-spacing: -0.018em;
   color: var(--ink);
-  max-width: 15ch;
+  max-width: 28ch;
 }
 
 .hero-rule {
@@ -339,6 +339,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   font-weight: 600;
   font-size: 11px;
   letter-spacing: 0.42em;
+  text-transform: uppercase;
   color: var(--red);
 }
 
@@ -380,6 +381,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   font-weight: 600;
   letter-spacing: 0.18em;
   line-height: 2;
+  text-transform: uppercase;
   color: var(--ink);
 }
 .band-info .dots { width: 104px; height: 40px; margin-top: auto; }
@@ -412,7 +414,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  gap: 22px;
+  gap: 14px;
   border-bottom: 1px solid var(--line-strong);
   padding: 0 6px;
 }
@@ -438,14 +440,14 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .metric-xlabels {
   display: flex;
   justify-content: center;
-  gap: 26px;
+  gap: 14px;
   margin-top: 8px;
   font-family: var(--font-mono);
   font-size: 9.5px;
   letter-spacing: 0.08em;
   color: var(--muted);
 }
-.metric-xlabels span { width: 40px; }
+.metric-xlabels span { width: 36px; text-align: center; }
 
 /* how it works ----------------------------------------------------------- */
 
@@ -493,6 +495,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   font-weight: 700;
   font-size: 12px;
   letter-spacing: 0.22em;
+  text-transform: uppercase;
   color: var(--ink);
 }
 .step-label .num { color: var(--red); margin-right: 10px; }
@@ -541,6 +544,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   font-weight: 700;
   font-size: 9.5px;
   letter-spacing: 0.13em;
+  text-transform: uppercase;
   color: var(--ink);
   white-space: nowrap;
 }
@@ -793,6 +797,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   font-weight: 500;
   letter-spacing: 0.12em;
   line-height: 1.9;
+  text-transform: uppercase;
   color: rgba(23, 57, 94, 0.75);
 }
 .spec-nums.right { text-align: right; }
@@ -805,6 +810,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   font-weight: 700;
   font-size: 11px;
   letter-spacing: 0.4em;
+  text-transform: uppercase;
   color: var(--ink);
   padding-bottom: 4px;
 }
