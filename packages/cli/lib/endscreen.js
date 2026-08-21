@@ -152,6 +152,14 @@ async function askImprovementsSubmission({ results, state, paths }) {
 export async function runEndScreen({ results, state, paths }) {
   console.log(renderSummary(results, state));
 
+  if (!process.stdin.isTTY) {
+    console.log(dim("  stdin is not a TTY — skipping the end-screen questions (loop more /"));
+    console.log(dim("  submit site stats / submit anonymous improvements). Run makefaster in"));
+    console.log(dim("  a terminal to submit, or POST .makefaster/results.json-derived payloads"));
+    console.log(dim(`  to ${state.apiBase}/api/submit-site and /api/submit-improvements.`));
+    return { loopMore: false };
+  }
+
   console.log(`  ${bold("1. Loop more?")}`);
   console.log(dim(`     Resets the miss counter (currently ${results?.missStreak ?? "?"}/${state.maxMisses}) and continues the loop.`));
   const loopMore = await confirm("     Keep looping?", { def: false });
