@@ -1,0 +1,5 @@
+node_modules/
+server/.data/
+.makefaster/
+*.tgz
+.DS_Store

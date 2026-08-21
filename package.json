@@ -1,0 +1,35 @@
+{
+  "name": "makefaster",
+  "version": "0.1.0",
+  "description": "AI skill that runs an autoresearch loop to make your site measurably faster. `npx makefaster` drives the agent CLI you already have (Cursor, Claude Code, or Codex) through profile -> hypothesis -> measure -> keep/revert iterations, then submits results to the public leaderboards.",
+  "type": "module",
+  "bin": {
+    "makefaster": "packages/cli/bin/makefaster.js"
+  },
+  "files": [
+    "packages/cli",
+    "packages/skill",
+    "data/improvements.json"
+  ],
+  "scripts": {
+    "test": "node --test packages/cli/test/*.test.mjs server/test/*.test.mjs",
+    "serve": "node server/server.mjs",
+    "site": "python3 -m http.server 8000"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jjcm/makefaster.git"
+  },
+  "homepage": "https://github.com/jjcm/makefaster#readme",
+  "keywords": [
+    "performance",
+    "lighthouse",
+    "lcp",
+    "agent",
+    "skill",
+    "autoresearch"
+  ]
+}

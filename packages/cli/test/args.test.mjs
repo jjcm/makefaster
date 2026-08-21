@@ -1,0 +1,46 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { parseArgs, USAGE } from "../lib/args.js";
+
+test("defaults", () => {
+  const { args, errors } = parseArgs([]);
+  assert.deepEqual(errors, []);
+  assert.equal(args.targetDir, null);
+  assert.equal(args.cli, null);
+  assert.equal(args.maxMisses, 5);
+  assert.equal(args.help, false);
+});
+
+test("positional dir plus flags", () => {
+  const { args, errors } = parseArgs(["../mysite", "--cli", "claude", "--url", "example.com", "--max-misses", "3", "--api", "https://api.example.com/"]);
+  assert.deepEqual(errors, []);
+  assert.equal(args.targetDir, "../mysite");
+  assert.equal(args.cli, "claude");
+  assert.equal(args.url, "example.com");
+  assert.equal(args.maxMisses, 3);
+  assert.equal(args.api, "https://api.example.com"); // trailing slash stripped
+});
+
+test("--cli aliases map to canonical keys", () => {
+  for (const [alias, key] of [["cursor-agent", "cursor"], ["agent", "cursor"], ["claude-code", "claude"], ["Codex", "codex"]]) {
+    const { args, errors } = parseArgs(["--cli", alias]);
+    assert.deepEqual(errors, [], alias);
+    assert.equal(args.cli, key, alias);
+  }
+});
+
+test("errors: unknown flag, bad cli, bad max-misses, missing values, extra positional", () => {
+  assert.match(parseArgs(["--frobnicate"]).errors[0], /unknown option/);
+  assert.match(parseArgs(["--cli", "gemini"]).errors[0], /--cli must be one of/);
+  assert.match(parseArgs(["--max-misses", "0"]).errors[0], /between 1 and 100/);
+  assert.match(parseArgs(["--max-misses", "nope"]).errors[0], /between 1 and 100/);
+  assert.match(parseArgs(["--url"]).errors[0], /needs a value/);
+  assert.match(parseArgs(["a", "b"]).errors[0], /unexpected argument/);
+});
+
+test("help and version flags", () => {
+  assert.equal(parseArgs(["-h"]).args.help, true);
+  assert.equal(parseArgs(["--version"]).args.version, true);
+  assert.match(USAGE, /npx makefaster/);
+  assert.match(USAGE, /--max-misses/);
+});

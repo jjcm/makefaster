@@ -1,30 +1,35 @@
 /**
- * Makefaster data API — tiny fetch wrappers + client-side submission stubs.
+ * Makefaster data API — fetch wrappers over the real endpoints.
  *
- * Read endpoints (static JSON, live now):
+ * Read endpoints:
  *   GET data/sites.json         -> MakefasterAPI.getSites()
  *   GET data/improvements.json  -> MakefasterAPI.getImprovements()
+ *   Served live from the leaderboard store when the site runs behind
+ *   `node server/server.mjs`; a dumb file server (python3 -m http.server)
+ *   serves the committed seed JSON instead, so the marketing pages always
+ *   render.
  *
- * Write endpoints (client stubs, localStorage-backed for now):
+ * Write endpoints (the `npx makefaster` skill posts these; the pages only
+ * read):
  *   POST /api/submit-site          -> MakefasterAPI.submitSite(payload)
  *   POST /api/submit-improvements  -> MakefasterAPI.submitImprovements(payload)
  *
- * The submit stubs append to localStorage so the autoresearch skill can be
- * developed against the final payload shapes before the real backend exists.
- * A later pass swaps their internals for real fetch() POSTs with the same
- * signatures and return shapes.
+ * When the static pages are hosted apart from the API (e.g. GitHub Pages +
+ * a deployed server), set the API origin before this script loads:
+ *   <script>window.MAKEFASTER_API_BASE = "https://api.example.com";</script>
+ * Same-origin relative paths are used otherwise.
  */
 (function (global) {
   "use strict";
 
+  function apiBase() {
+    var base = global.MAKEFASTER_API_BASE || "";
+    return base.replace(/\/$/, "");
+  }
+
   var DATA_URLS = {
     sites: "data/sites.json",
     improvements: "data/improvements.json",
-  };
-
-  var STORE_KEYS = {
-    sites: "makefaster.submissions.sites",
-    improvements: "makefaster.submissions.improvements",
   };
 
   function getJson(url) {
@@ -34,10 +39,29 @@
     });
   }
 
+  function postJson(path, payload) {
+    var url = apiBase() + path;
+    return fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(payload),
+    }).then(function (res) {
+      return res.json().catch(function () {
+        return {};
+      }).then(function (body) {
+        if (!res.ok) {
+          var reason = body && body.errors ? body.errors.join("; ") : "HTTP " + res.status;
+          throw new Error("POST " + path + " failed: " + reason);
+        }
+        return body;
+      });
+    });
+  }
+
   /**
    * Site leaderboard rows.
-   * Row shape: { url, favicon, lcpRaw, lcpDelta, ttiRaw, ttiDelta, mode }
-   * (plus optional extras this stub dataset also carries: name, tests, measuredAt)
+   * Row shape: { name, url, favicon, lcpRaw, lcpDelta, ttiRaw, ttiDelta,
+   *              mode, tests, measuredAt }
    * lcpDelta / ttiDelta are percentages vs. baseline (negative = faster).
    * mode is "cold" or "warm".
    */
@@ -46,27 +70,13 @@
   }
 
   /**
-   * Improvement leaderboard categories (top 50).
-   * Shape: { name, count, avgImprovementMs, avgImprovementPct }
-   * (plus optional extras: rank, description, icon)
+   * Improvement leaderboard categories, ranked (top 50 seeded; community
+   * submissions can grow the list).
+   * Shape: { rank, name, description, count, avgImprovementMs,
+   *          avgImprovementPct, icon }
    */
   function getImprovements() {
     return getJson(DATA_URLS.improvements);
-  }
-
-  function readStore(key) {
-    try {
-      return JSON.parse(localStorage.getItem(key)) || [];
-    } catch (err) {
-      return [];
-    }
-  }
-
-  function appendStore(key, entry) {
-    var all = readStore(key);
-    all.push(entry);
-    localStorage.setItem(key, JSON.stringify(all));
-    return all.length;
   }
 
   function assertFields(payload, fields, label) {
@@ -82,24 +92,22 @@
   }
 
   /**
-   * Stub for POST /api/submit-site — one measurement run for one site.
+   * POST /api/submit-site — one measurement run for one site. The URL and
+   * favicon are displayed on the public site leaderboard.
    *
-   * Payload shape:
+   * Payload:
    * {
-   *   url:      "example.com",        // required — bare domain
+   *   url:      "example.com",        // required — bare domain (scheme ok)
    *   mode:     "cold" | "warm",      // required
    *   lcpRaw:   1842,                 // required — ms
    *   lcpDelta: -34,                  // required — % vs. baseline (negative = faster)
    *   ttiRaw:   2945,                 // required — ms
    *   ttiDelta: -29,                  // required — % vs. baseline
-   *   name:      "Example",           // optional display name
-   *   favicon:   "https://...",       // optional favicon URL
-   *   tests:     6,                   // optional test-run count
-   *   measuredAt:"2024-05-12T14:15:00Z" // optional ISO timestamp
+   *   name:     "Example",            // optional display name
+   *   favicon:  "https://..."         // optional favicon URL
    * }
    *
-   * Resolves { ok: true, endpoint, queued } where queued is the number of
-   * submissions currently held in localStorage.
+   * Resolves the server response: { ok, created, row }.
    */
   function submitSite(payload) {
     var invalid = assertFields(payload, ["url", "mode", "lcpRaw", "lcpDelta", "ttiRaw", "ttiDelta"], "submitSite");
@@ -107,47 +115,49 @@
     if (payload.mode !== "cold" && payload.mode !== "warm") {
       return Promise.reject(new Error("submitSite: mode must be 'cold' or 'warm'"));
     }
-    var queued = appendStore(STORE_KEYS.sites, {
-      payload: payload,
-      receivedAt: new Date().toISOString(),
-    });
-    return Promise.resolve({ ok: true, endpoint: "/api/submit-site", queued: queued });
+    return postJson("/api/submit-site", payload);
   }
 
   /**
-   * Stub for POST /api/submit-improvements — improvements applied to one site.
+   * POST /api/submit-improvements — anonymous by design: no URL, no site
+   * identity, just what was improved and by how much. The server embeds each
+   * entry and either folds it into the closest existing category (cosine
+   * similarity above threshold) or creates a new category on the improvement
+   * leaderboard.
    *
-   * Payload shape:
+   * Payload:
    * {
-   *   url: "example.com",                   // required
-   *   improvements: [                       // required, at least one entry
+   *   improvements: [                  // required, 1–50 entries
    *     {
-   *       category:  "Gzip / Brotli Compression", // required — category name
-   *       deltaMs:   -412,                  // optional — ms saved (negative = faster)
-   *       deltaPct:  -28.6,                 // optional — % vs. baseline
-   *       appliedAt: "2024-05-12T14:15:00Z" // optional ISO timestamp
-   *     }
+   *       name:        "Inline critical CSS",   // required
+   *       description: "Inlined above-the-fold styles", // recommended
+   *       deltaMs:     -120,           // ms saved (negative = faster)
+   *       deltaPct:    -8.5            // % vs. baseline (negative = faster)
+   *     }                              // at least one delta required
    *   ]
    * }
    *
-   * Resolves { ok: true, endpoint, queued }.
+   * Resolves the server response:
+   * { ok, results: [{ input, action: "matched"|"created", category, similarity }],
+   *   embedder, threshold }.
    */
   function submitImprovements(payload) {
-    var invalid = assertFields(payload, ["url", "improvements"], "submitImprovements");
+    var invalid = assertFields(payload, ["improvements"], "submitImprovements");
     if (invalid) return invalid;
     if (!Array.isArray(payload.improvements) || payload.improvements.length === 0) {
       return Promise.reject(new Error("submitImprovements: improvements must be a non-empty array"));
     }
     for (var i = 0; i < payload.improvements.length; i++) {
-      if (!payload.improvements[i] || !payload.improvements[i].category) {
-        return Promise.reject(new Error("submitImprovements: improvements[" + i + "] is missing 'category'"));
+      var entry = payload.improvements[i];
+      if (!entry || !entry.name) {
+        return Promise.reject(new Error("submitImprovements: improvements[" + i + "] is missing 'name'"));
+      }
+      if ((entry.deltaMs === undefined || entry.deltaMs === null) &&
+          (entry.deltaPct === undefined || entry.deltaPct === null)) {
+        return Promise.reject(new Error("submitImprovements: improvements[" + i + "] needs deltaMs or deltaPct"));
       }
     }
-    var queued = appendStore(STORE_KEYS.improvements, {
-      payload: payload,
-      receivedAt: new Date().toISOString(),
-    });
-    return Promise.resolve({ ok: true, endpoint: "/api/submit-improvements", queued: queued });
+    return postJson("/api/submit-improvements", payload);
   }
 
   global.MakefasterAPI = {
