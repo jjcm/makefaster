@@ -6,8 +6,8 @@
  *   data/improvements.json  — improvement-category leaderboard rows
  *
  * Deterministic (seeded PRNG) so re-running produces identical output.
- * These files are stand-ins for what the `npx makefaster` skill will
- * eventually submit; see js/api.js for the payload contracts.
+ * These files are the seed dataset the Go server loads into MariaDB on a fresh
+ * database; see frontend/js/api.js for the payload contracts.
  *
  * Usage: node scripts/generate-data.mjs
  */

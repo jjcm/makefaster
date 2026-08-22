@@ -174,7 +174,7 @@ export async function runEndScreen({ results, state, paths }) {
   console.log("");
   await askImprovementsSubmission({ results, state, paths });
   console.log("");
-  console.log(dim(`  Leaderboards: ${state.apiBase}/site-leaderboard.html - ${state.apiBase}/improvement-leaderboard.html`));
+  console.log(dim(`  Leaderboards: ${state.apiBase}/site-leaderboard - ${state.apiBase}/improvement-leaderboard`));
   console.log("");
   return { loopMore: false };
 }

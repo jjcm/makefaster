@@ -1,0 +1,30 @@
+# MariaDB for local development, matching the default MARIADB_DSN in
+# env.example. The server itself runs on the host via ./run.sh.
+#
+#   docker compose up -d
+#   ./run.sh
+#
+# makefaster_test is created alongside makefaster so the Go tests have a
+# throwaway schema to drop and re-migrate:
+#   MAKEFASTER_TEST_MARIADB_DSN='root:root@tcp(127.0.0.1:3306)/makefaster_test?parseTime=true' \
+#     go test ./... --- run from backend/
+services:
+  mariadb:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: makefaster
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      - ./scripts/mariadb-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  mariadb-data:
