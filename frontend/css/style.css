@@ -78,6 +78,21 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 
 .icon { display: inline-block; vertical-align: middle; flex: none; }
 
+/* ------------------------------------------------------- custom elements */
+
+/* Every component renders into light DOM so the rules below keep applying to
+   its markup. That makes each host element an extra box in the tree, and an
+   unstyled custom element is inline, so the structural ones are declared
+   blocks. See also `site-header` in the masthead section. */
+app-root,
+landing-page,
+site-leaderboard-page,
+improvement-leaderboard-page,
+geo-row,
+spec-footer {
+  display: block;
+}
+
 /* ---------------------------------------------------------------- sheet */
 
 .sheet {
@@ -110,6 +125,10 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 
 /* -------------------------------------------------------------- masthead */
 
+/* <site-header> is a light-DOM wrapper around .masthead, so it needs to be a
+   block for the header's grid to lay out at full width. */
+site-header { display: block; }
+
 .masthead {
   display: grid;
   grid-template-columns: 1fr 88px;
@@ -119,7 +138,6 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 
 .sheet--framed .masthead { border-bottom: 1px solid var(--line-strong); }
 
-.sheet--open .topline { border-top: 1px solid var(--line); margin: 0 -6px 12px; }
 .sheet--open .masthead { border: 1px solid var(--line-strong); }
 
 .masthead-main {
@@ -175,19 +193,10 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 
 .georow {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: flex-start;
   padding: 18px 0 6px;
   min-height: 74px;
-}
-
-.coords {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-weight: 500;
-  letter-spacing: 0.14em;
-  color: var(--ink);
-  line-height: 1.75;
 }
 
 .ref-tab {

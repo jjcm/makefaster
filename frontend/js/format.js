@@ -1,0 +1,101 @@
+/**
+ * Small rendering helpers shared by the two leaderboard components:
+ * escaping, the windowed pagination control, CSV export, and a seeded PRNG for
+ * the decorative sparkbars.
+ */
+
+export function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * Numbered pagination with a windowed range: ‹ 1 2 3 … 125 ›
+ */
+export function renderPagination(container, page, pageCount, onPage) {
+  container.innerHTML = "";
+  if (pageCount < 1) return;
+
+  function button(label, opts) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.innerHTML = label;
+    if (opts.className) b.className = opts.className;
+    if (opts.disabled) b.disabled = true;
+    if (opts.page) {
+      b.addEventListener("click", function () {
+        onPage(opts.page);
+      });
+      b.setAttribute("aria-label", "Page " + opts.page);
+      if (opts.current) b.setAttribute("aria-current", "page");
+    }
+    container.appendChild(b);
+  }
+
+  button("&lsaquo;", { disabled: page <= 1, page: Math.max(1, page - 1) });
+
+  var nums = [];
+  for (var p = 1; p <= pageCount; p++) {
+    if (
+      p === 1 ||
+      p === pageCount ||
+      Math.abs(p - page) <= 1 ||
+      (page <= 2 && p <= 3) ||
+      (page >= pageCount - 1 && p >= pageCount - 2)
+    ) {
+      nums.push(p);
+    }
+  }
+  var last = 0;
+  nums.forEach(function (p) {
+    if (last && p - last > 1) {
+      var gap = document.createElement("button");
+      gap.type = "button";
+      gap.className = "gap";
+      gap.textContent = "\u2026";
+      gap.disabled = true;
+      container.appendChild(gap);
+    }
+    button(String(p), { className: p === page ? "active" : "", page: p, current: p === page });
+    last = p;
+  });
+
+  button("&rsaquo;", { disabled: page >= pageCount, page: Math.min(pageCount, page + 1) });
+}
+
+export function downloadCsv(filename, header, rows) {
+  function cell(v) {
+    var s = v === null || v === undefined ? "" : String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  var lines = [header.map(cell).join(",")].concat(
+    rows.map(function (r) {
+      return r.map(cell).join(",");
+    })
+  );
+  var blob = new Blob([lines.join("\n") + "\n"], { type: "text/csv;charset=utf-8" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/** Deterministic PRNG for stable decorative sparkbars. */
+export function mulberry32(seed) {
+  var a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    var t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
