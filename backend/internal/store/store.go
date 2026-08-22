@@ -1,9 +1,15 @@
 // Package store is the MariaDB persistence layer for the two leaderboards.
 //
-// The committed files in data/ are the seed dataset: the first boot against an
-// empty database copies them in, and the tables own the data from then on.
+// The files in SEED_DIR are the seed dataset: the first boot against an empty
+// database copies them in, and the tables own the data from then on.
 // GET /data/*.json always reads these tables, never the seed files, so the
 // boards reflect submissions.
+//
+// The committed seed in data/ is deliberately empty, because the public boards
+// carry real submissions only. Seeding therefore normally does nothing, and
+// that is the point: a redeploy or a rebuilt database cannot republish rows
+// nobody submitted. The mechanism stays because a local or self-hosted
+// deployment can still point SEED_DIR at a populated pair of files.
 package store
 
 import (
@@ -136,7 +142,7 @@ func (s *Store) UpsertSite(ctx context.Context, submission leaderboard.SiteSubmi
 // ReplaceCategories swaps the whole improvement leaderboard for a freshly
 // reranked one. Categorization rewrites every rank, so replacing the table in
 // one transaction is both simpler and more faithful than diffing rows; the
-// board is ~50 rows.
+// board is on the order of tens of rows.
 func (s *Store) ReplaceCategories(ctx context.Context, categories []leaderboard.Category) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -156,8 +162,9 @@ func (s *Store) ReplaceCategories(ctx context.Context, categories []leaderboard.
 	return nil
 }
 
-// Seed copies the committed seed files into empty tables. It is a no-op once
-// either board holds data, so it is safe on every boot.
+// Seed copies the seed files into empty tables. It is a no-op once a board
+// holds data, and also when its seed file is missing or an empty array, so it
+// is safe on every boot.
 func (s *Store) Seed(ctx context.Context, seedDir string) error {
 	if err := s.seedSites(ctx, seedDir); err != nil {
 		return err

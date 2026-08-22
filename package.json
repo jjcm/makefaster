@@ -8,8 +8,7 @@
   },
   "files": [
     "packages/cli",
-    "packages/skill",
-    "data/improvements.json"
+    "packages/skill"
   ],
   "scripts": {
     "test": "node --test packages/cli/test/*.test.mjs",

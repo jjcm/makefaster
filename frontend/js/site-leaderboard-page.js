@@ -313,8 +313,11 @@ class SiteLeaderboardPage extends HTMLElement {
 
     if (!pageRows.length) {
       var empty = document.createElement("tr");
+      var message = this.rows.length
+        ? "No sites match your search."
+        : "No sites yet \u2014 the board fills up as loops submit their results.";
       empty.innerHTML =
-        '<td colspan="5" style="text-align:center;color:var(--muted);padding:34px 16px;">No sites match your search.</td>';
+        '<td colspan="5" style="text-align:center;color:var(--muted);padding:34px 16px;">' + message + "</td>";
       this.els.tbody.appendChild(empty);
     }
 
@@ -372,7 +375,8 @@ class SiteLeaderboardPage extends HTMLElement {
       this.els.showing.textContent = "Showing 0 sites";
     }
 
-    renderPagination(this.els.pagination, this.state.page, pageCount, function (p) {
+    // Nothing to page through: 0 renders an empty nav rather than a lone "1".
+    renderPagination(this.els.pagination, this.state.page, data.length ? pageCount : 0, function (p) {
       self.state.page = p;
       self.renderTable();
     });

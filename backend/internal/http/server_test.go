@@ -26,7 +26,13 @@ const testDSNEnv = "MAKEFASTER_TEST_MARIADB_DSN"
 
 const migrationsDir = "../db/migrations"
 
-func seedDir() string { return filepath.Join("..", "..", "..", "data") }
+// fixtureSeedDir is a one-site, one-category seed: enough to prove the
+// seed-from-file path end to end without depending on the size or contents of
+// the committed public seed, which is empty on purpose.
+func fixtureSeedDir() string { return filepath.Join("testdata", "seed") }
+
+// committedSeedDir is the seed the deploy actually reads.
+func committedSeedDir() string { return filepath.Join("..", "..", "..", "data") }
 
 // freshDatabase drops everything the server owns and re-runs the migrations,
 // so each test starts from the state a brand new deploy would see.
@@ -58,8 +64,13 @@ func freshDatabase(t *testing.T) *sql.DB {
 // serve. Calling it twice against one database is a process restart.
 func boot(t *testing.T, pool *sql.DB) *httptest.Server {
 	t.Helper()
+	return bootWithSeed(t, pool, fixtureSeedDir())
+}
+
+func bootWithSeed(t *testing.T, pool *sql.DB, seedDir string) *httptest.Server {
+	t.Helper()
 	leaderboards := store.New(pool)
-	if err := leaderboards.Seed(context.Background(), seedDir()); err != nil {
+	if err := leaderboards.Seed(context.Background(), seedDir); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -149,25 +160,25 @@ func TestServesTheSPAAndLiveSeededData(t *testing.T) {
 		t.Errorf("GET /css/style.css = %d, content-type %q", css.StatusCode, css.Header.Get("content-type"))
 	}
 
-	// A fresh migrate must leave the committed board in place: the CLI reads
-	// its improvement checklist from this endpoint.
+	// A fresh migrate copies whatever the seed directory holds into the tables,
+	// and both boards are then served from those tables.
 	var categories []leaderboard.Category
 	if status := getJSON(t, base+"/data/improvements.json", &categories); status != http.StatusOK {
 		t.Fatalf("GET /data/improvements.json = %d", status)
 	}
-	if len(categories) != 50 {
-		t.Errorf("expected 50 seeded categories, got %d", len(categories))
+	if len(categories) != 1 {
+		t.Fatalf("expected the 1 seeded category, got %d", len(categories))
 	}
-	for i, category := range categories {
-		if category.Rank != i+1 {
-			t.Errorf("categories must arrive in rank order; position %d has rank %d", i, category.Rank)
-			break
-		}
+	if categories[0].Rank != 1 || categories[0].Name != "Image Optimization" {
+		t.Errorf("unexpected seeded category: %+v", categories[0])
 	}
 
 	var sites []leaderboard.SiteRow
-	if status := getJSON(t, base+"/data/sites.json", &sites); status != http.StatusOK || len(sites) == 0 {
-		t.Errorf("GET /data/sites.json = %d with %d rows", status, len(sites))
+	if status := getJSON(t, base+"/data/sites.json", &sites); status != http.StatusOK {
+		t.Fatalf("GET /data/sites.json = %d", status)
+	}
+	if len(sites) != 1 || sites[0].URL != "seed.example.com" {
+		t.Errorf("expected the 1 seeded site, got %+v", sites)
 	}
 
 	var health struct {
@@ -180,6 +191,28 @@ func TestServesTheSPAAndLiveSeededData(t *testing.T) {
 	}
 	if !health.OK || health.Embedder != "local-hash-v1" || health.Threshold != 0.3 {
 		t.Errorf("unexpected health payload: %+v", health)
+	}
+}
+
+// The public leaderboards hold real submissions only. A fresh migrate against
+// the committed seed must therefore leave both boards empty, so a redeploy or a
+// new environment can never republish synthetic rows.
+func TestCommittedSeedLeavesBothBoardsEmpty(t *testing.T) {
+	base := bootWithSeed(t, freshDatabase(t), committedSeedDir()).URL
+
+	for _, path := range []string{"/data/improvements.json", "/data/sites.json"} {
+		res, err := http.Get(base + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		body, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s = %d", path, res.StatusCode)
+		}
+		if strings.TrimSpace(string(body)) != "[]" {
+			t.Errorf("GET %s = %s, want []", path, body)
+		}
 	}
 }
 
@@ -330,7 +363,7 @@ func TestSubmitImprovementsFoldsMatchesAndCreatesNovelCategories(t *testing.T) {
 		}
 	}
 	if imageCount == 0 {
-		t.Fatal("seed board is missing Image Optimization")
+		t.Fatal("the fixture seed board is missing Image Optimization")
 	}
 
 	var response struct {
@@ -358,8 +391,8 @@ func TestSubmitImprovementsFoldsMatchesAndCreatesNovelCategories(t *testing.T) {
 
 	var after []leaderboard.Category
 	getJSON(t, base+"/data/improvements.json", &after)
-	if len(after) != 51 {
-		t.Fatalf("expected 51 categories, got %d", len(after))
+	if len(after) != len(before)+1 {
+		t.Fatalf("expected %d categories, got %d", len(before)+1, len(after))
 	}
 
 	ranks := map[int]bool{}
@@ -373,8 +406,8 @@ func TestSubmitImprovementsFoldsMatchesAndCreatesNovelCategories(t *testing.T) {
 			t.Errorf("Image Optimization count: got %d, want %d", after[i].Count, imageCount+1)
 		}
 	}
-	if len(ranks) != 51 {
-		t.Errorf("ranks must be a permutation of 1..51, got %d distinct values", len(ranks))
+	if len(ranks) != len(after) {
+		t.Errorf("ranks must be a permutation of 1..%d, got %d distinct values", len(after), len(ranks))
 	}
 	if created == nil {
 		t.Fatal("the novel category is missing from the live board")
@@ -392,8 +425,8 @@ func TestSubmitImprovementsFoldsMatchesAndCreatesNovelCategories(t *testing.T) {
 	restarted := boot(t, pool).URL
 	var persisted []leaderboard.Category
 	getJSON(t, restarted+"/data/improvements.json", &persisted)
-	if len(persisted) != 51 {
-		t.Errorf("expected 51 categories after restart, got %d", len(persisted))
+	if len(persisted) != len(after) {
+		t.Errorf("expected %d categories after restart, got %d", len(after), len(persisted))
 	}
 }
 

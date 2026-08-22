@@ -13,6 +13,7 @@ run.sh              start the server: cd backend && go run ./cmd/server
 backend/            the Go server — APIs, migrations, static SPA hosting
 frontend/           the SPA: index.html, css/, js/ (one component per file)
 data/               the seed leaderboards, loaded into MariaDB on first boot
+                    (empty — the public boards carry real submissions only)
 packages/cli/       the npx makefaster CLI
 packages/skill/     the loop skill the CLI hands to your agent
 ```
@@ -36,9 +37,11 @@ What happens:
    or downloads a model; it drives your existing install. If none are found
    it prints the real installers and exits.
 2. **Asks you to pick** among the CLIs actually found — before anything runs.
-3. **Imports the top-50 improvement categories** from the live leaderboard
-   (falling back to this repo's `data/improvements.json`) as a checklist of
-   likely wins — a guide, not a script.
+3. **Imports the improvement checklist** — up to the top 50 categories from the
+   live leaderboard, falling back to the technique catalog bundled at
+   [`packages/cli/data/improvements.json`](packages/cli/data/improvements.json)
+   while the public board is still filling up. Either way it is a guide of
+   likely wins, not a script.
 4. **Hands your repo to the agent** with the loop skill
    ([`packages/skill/SKILL.md`](packages/skill/SKILL.md)): profile a
    user-felt metric (Lighthouse if available; cold + warm; median of ≥3 runs),
@@ -90,6 +93,15 @@ are empty, and serves the SPA plus both APIs from the one process. Restarting
 after a schema change is the whole deploy story — there is no separate migrate
 step.
 
+The committed `data/` seed is empty, so a fresh database gives you empty boards.
+To browse the SPA with a full one, generate a synthetic pair and point `SEED_DIR`
+at it:
+
+```bash
+node scripts/generate-data.mjs --out-dir /tmp/makefaster-demo
+SEED_DIR=/tmp/makefaster-demo ./run.sh
+```
+
 Without Docker, point `MARIADB_DSN` at any MariaDB or MySQL and create the
 schema first:
 
@@ -108,7 +120,7 @@ Every variable has a working default, so an empty `.env` boots. See
 | `HOST` | `0.0.0.0` | bind address |
 | `MARIADB_DSN` | `root:root@tcp(127.0.0.1:3306)/makefaster?parseTime=true` | database; `parseTime=true` is required |
 | `MIGRATIONS_DIR` | `./internal/db/migrations` | goose migrations, applied on start |
-| `SEED_DIR` | `../data` | seed JSON, read only into empty tables |
+| `SEED_DIR` | `../data` | seed JSON, read only into empty tables; the committed default is empty |
 | `FRONTEND_DIR` | `../frontend` | SPA static root |
 | `MAKEFASTER_EMBEDDINGS_API_KEY` / `OPENAI_API_KEY` | — | switches the embedder from local to a remote OpenAI-compatible endpoint |
 | `MAKEFASTER_EMBEDDINGS_MODEL` | `text-embedding-3-small` | remote embedding model |
@@ -135,12 +147,13 @@ route, and unknown app paths are served the shell so a hard refresh works.
 ## Data APIs
 
 Served by the Go process, reading the live MariaDB tables rather than the
-committed seed files:
+committed seed files. Both boards are built from real submissions only, so they
+start empty and grow as loops report results:
 
 | Endpoint | What | Wrapper |
 |----------|------|---------|
-| `GET /data/sites.json` | live site rows (seed: 1,248 sites × cold/warm) | `MakefasterAPI.getSites()` |
-| `GET /data/improvements.json` | live ranked categories (seed: top 50) | `MakefasterAPI.getImprovements()` |
+| `GET /data/sites.json` | live site rows, one per site per load mode | `MakefasterAPI.getSites()` |
+| `GET /data/improvements.json` | live ranked categories | `MakefasterAPI.getImprovements()` |
 | `GET /api/health` | `{ ok, embedder, threshold }` | — |
 | `POST /api/submit-site` | `{ url, favicon?, name?, lcpRaw, lcpDelta, ttiRaw, ttiDelta, mode: cold\|warm }` — upserts the site's row; URL + favicon shown publicly | `MakefasterAPI.submitSite(payload)` |
 | `POST /api/submit-improvements` | `{ improvements: [{ name, description?, deltaMs?, deltaPct? }] }` — anonymous; embedding-matched into categories (cosine similarity folds into the closest category or creates a new one) | `MakefasterAPI.submitImprovements(payload)` |
@@ -176,12 +189,12 @@ request, so the backend can be switched at any time.
 Row shapes:
 
 ```js
-// data/sites.json — one row per site per load mode
-{ "name": "Google", "url": "google.com", "favicon": "https://…",
+// site leaderboard — one row per site per load mode
+{ "name": "Example", "url": "example.com", "favicon": "https://…",
   "lcpRaw": 1842, "lcpDelta": -34, "ttiRaw": 2945, "ttiDelta": -29,
   "mode": "cold", "tests": 6, "measuredAt": "2024-05-12T14:15:00.000Z" }
 
-// data/improvements.json — one row per improvement category
+// improvement leaderboard — one row per improvement category
 { "rank": 1, "name": "Gzip / Brotli Compression",
   "description": "Enable or improve text compression",
   "count": 286, "avgImprovementMs": -497, "avgImprovementPct": -28.6,
@@ -190,14 +203,13 @@ Row shapes:
 
 `measuredAt` is always ISO-8601 with milliseconds, in UTC.
 
-Regenerate the seed datasets (deterministic, seeded):
-
-```bash
-node scripts/generate-data.mjs
-```
-
-These files only matter on a fresh database — once the tables hold rows the
+Seed files only matter on a fresh database — once the tables hold rows the
 server never reads them again. Back up the live boards with `mysqldump`.
+
+`scripts/generate-data.mjs` builds a synthetic pair of files in these shapes
+(deterministic, seeded) for filling a local database. It requires an explicit
+`--out-dir` and refuses to write into `data/`, so a regeneration cannot put
+invented sites back on the public boards.
 
 ## Deploying
 
@@ -239,11 +251,17 @@ MAKEFASTER_TEST_MARIADB_DSN='root:root@tcp(127.0.0.1:3306)/makefaster_test?parse
 ```
 
 They drop the tables and re-migrate, so the schema is created from scratch every
-run. Coverage: the seeded 50-category board after a fresh migrate, `201` then
-`200` on a repeated submission, the board surviving a process restart, the health
-payload, static/SPA fallback and legacy redirects, CORS, and the body cap. The
-embedding tests pin the local match threshold and the exact similarity scores
-the Node implementation produced, so the fold-vs-create boundary cannot drift.
+run. Coverage: seed-from-file against a one-site, one-category fixture in
+`backend/internal/http/testdata/seed/`; a fresh migrate against the committed
+(empty) seed leaving both endpoints serving `[]`; `201` then `200` on a repeated
+submission; the board surviving a process restart; the health payload;
+static/SPA fallback and legacy redirects; CORS; and the body cap.
+
+The categorization and embedding tests need a realistic board to match against,
+so they read `backend/testdata/categories.json` — a frozen 50-row fixture that
+is test-only and never served. The embedding tests pin the local match threshold
+and the exact similarity scores the Node implementation produced against it, so
+the fold-vs-create boundary cannot drift.
 
 ## Easter egg: concrete backgrounds
 

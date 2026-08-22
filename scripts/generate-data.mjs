@@ -1,22 +1,49 @@
 #!/usr/bin/env node
 /**
- * Regenerates the stub datasets consumed by the frontend:
+ * Generates a synthetic pair of leaderboard files in the shapes the boards use:
  *
- *   data/sites.json         — site leaderboard rows
- *   data/improvements.json  — improvement-category leaderboard rows
+ *   sites.json         — site leaderboard rows
+ *   improvements.json  — improvement-category leaderboard rows
  *
- * Deterministic (seeded PRNG) so re-running produces identical output.
- * These files are the seed dataset the Go server loads into MariaDB on a fresh
- * database; see frontend/js/api.js for the payload contracts.
+ * Deterministic (seeded PRNG) so re-running produces identical output. See
+ * frontend/js/api.js for the payload contracts.
  *
- * Usage: node scripts/generate-data.mjs
+ * The rows are invented, so they are only ever useful for filling a local
+ * development database or eyeballing the SPA with a full board. The public
+ * leaderboards carry real submissions only: the committed seed in data/ is
+ * empty, and this script refuses to write there so a regeneration cannot put
+ * demo sites back on the live site.
+ *
+ * Usage: node scripts/generate-data.mjs --out-dir <dir>
+ *   Then point the server at it: SEED_DIR=<dir> ./run.sh
  */
 
 import { writeFileSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const COMMITTED_SEED_DIR = resolve(ROOT, "data");
+
+function parseOutDir(argv) {
+  const flag = argv.indexOf("--out-dir");
+  const value = flag === -1 ? null : argv[flag + 1];
+  if (!value) {
+    console.error("usage: node scripts/generate-data.mjs --out-dir <dir>");
+    process.exit(1);
+  }
+  const dir = resolve(process.cwd(), value);
+  if (dir === COMMITTED_SEED_DIR) {
+    console.error(
+      "refusing to write to data/: that is the committed public seed, and it is " +
+        "empty on purpose so a fresh migrate cannot republish synthetic rows."
+    );
+    process.exit(1);
+  }
+  return dir;
+}
+
+const OUT_DIR = parseOutDir(process.argv.slice(2));
 
 /* ---------------------------------------------------------------- PRNG */
 
@@ -324,17 +351,17 @@ const improvements = IMPROVEMENTS.slice(0, 50).map((row, idx) => {
 
 /* ------------------------------------------------------------- output */
 
-function writeJson(rel, value, rowsKey) {
-  const path = join(ROOT, rel);
+function writeJson(name, value, rowsKey) {
+  const path = join(OUT_DIR, name);
   mkdirSync(dirname(path), { recursive: true });
   // one object per line keeps the files diffable without bloating them
   const lines = value.map((v) => "  " + JSON.stringify(v));
   writeFileSync(path, "[\n" + lines.join(",\n") + "\n]\n");
-  console.log(`wrote ${rel} (${value.length} ${rowsKey})`);
+  console.log(`wrote ${relative(process.cwd(), path)} (${value.length} ${rowsKey})`);
 }
 
-writeJson("data/sites.json", rows, "rows");
-writeJson("data/improvements.json", improvements, "categories");
+writeJson("sites.json", rows, "rows");
+writeJson("improvements.json", improvements, "categories");
 
 const cold = rows.filter((r) => r.mode === "cold");
 const avg = (k) => cold.reduce((a, r) => a + r[k], 0) / cold.length;

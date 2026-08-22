@@ -11,9 +11,13 @@ import (
 	"makefaster/internal/leaderboard"
 )
 
-func seedCategories(t *testing.T) []leaderboard.Category {
+// fixtureCategories loads backend/testdata/categories.json: a frozen 50-row
+// board that gives these tests a realistic list to categorize against. It is
+// test-only — the committed public seed in data/ is empty, and nothing serves
+// this file.
+func fixtureCategories(t *testing.T) []leaderboard.Category {
 	t.Helper()
-	path := filepath.Join("..", "..", "..", "data", "improvements.json")
+	path := filepath.Join("..", "..", "testdata", "categories.json")
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
@@ -41,7 +45,7 @@ func findCategory(t *testing.T, categories []leaderboard.Category, name string) 
 }
 
 func TestMatchedImprovementIncrementsCountAndFoldsAverages(t *testing.T) {
-	categories := seedCategories(t)
+	categories := fixtureCategories(t)
 	embedder, threshold := localEmbedder()
 	before := findCategory(t, categories, "Image Optimization")
 
@@ -77,7 +81,7 @@ func TestMatchedImprovementIncrementsCountAndFoldsAverages(t *testing.T) {
 }
 
 func TestNovelImprovementCreatesTitleCasedCategory(t *testing.T) {
-	categories := seedCategories(t)
+	categories := fixtureCategories(t)
 	embedder, threshold := localEmbedder()
 
 	updated, results := leaderboard.Categorize([]leaderboard.Improvement{{
@@ -115,7 +119,7 @@ func TestNovelImprovementCreatesTitleCasedCategory(t *testing.T) {
 }
 
 func TestTwoSimilarNovelEntriesCreateOneCategory(t *testing.T) {
-	categories := seedCategories(t)
+	categories := fixtureCategories(t)
 	embedder, threshold := localEmbedder()
 
 	updated, results := leaderboard.Categorize([]leaderboard.Improvement{
@@ -151,7 +155,7 @@ func TestTwoSimilarNovelEntriesCreateOneCategory(t *testing.T) {
 }
 
 func TestMissingDeltaMsLeavesThatAverageAlone(t *testing.T) {
-	categories := seedCategories(t)
+	categories := fixtureCategories(t)
 	embedder, threshold := localEmbedder()
 	before := findCategory(t, categories, "Tree Shaking")
 
@@ -207,7 +211,7 @@ func TestTitleCaseCategoryName(t *testing.T) {
 }
 
 func TestCreatedCategoryFallsBackToACommunityDescription(t *testing.T) {
-	categories := seedCategories(t)
+	categories := fixtureCategories(t)
 	embedder, threshold := localEmbedder()
 
 	updated, results := leaderboard.Categorize([]leaderboard.Improvement{{

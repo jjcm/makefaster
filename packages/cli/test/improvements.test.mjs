@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { importChecklist } from "../lib/improvements.js";
+import { BUNDLED_CHECKLIST_PATH, importChecklist } from "../lib/improvements.js";
 
 const SAMPLE = [
   { rank: 2, name: "Tree Shaking", description: "Remove unused JavaScript", count: 10, avgImprovementMs: -300, avgImprovementPct: -20 },
@@ -75,6 +75,37 @@ test("caps the checklist at the top 50 by rank", async () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// The public boards start empty and only fill up with real submissions, so
+// every remote source can legitimately answer `[]`. The bundled catalog is what
+// keeps `npx makefaster` useful in the meantime.
+test("falls back to the bundled catalog when every other source is empty", async () => {
+  const { server, base } = await listen((_req, res) => {
+    res.setHeader("content-type", "application/json");
+    res.end("[]");
+  });
+  const dir = mkdtempSync(join(tmpdir(), "mf-imp-"));
+  try {
+    mkdirSync(join(dir, "data"), { recursive: true });
+    writeFileSync(join(dir, "data", "improvements.json"), "[]");
+    const { categories, source } = await importChecklist({
+      override: null, apiBase: base, cwd: dir, rawUrl: `${base}/raw.json`,
+    });
+    assert.equal(source, "bundled fallback");
+    assert.ok(categories.length > 0, "the bundled checklist must never be empty");
+    assert.ok(categories.every((c) => typeof c.name === "string" && c.name.length > 0));
+    assert.equal(categories[0].rank, 1);
+  } finally {
+    server.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the bundled catalog ships with the CLI and is a valid checklist", () => {
+  const bundled = JSON.parse(readFileSync(BUNDLED_CHECKLIST_PATH, "utf8"));
+  assert.ok(Array.isArray(bundled) && bundled.length > 0);
+  assert.ok(bundled.every((row) => typeof row.name === "string" && typeof row.description === "string"));
 });
 
 test("rejects invalid checklist data with a useful error", async () => {
