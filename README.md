@@ -373,9 +373,16 @@ server too so the boards stay live.
 ## Tests
 
 ```bash
-npm test                                    # CLI detection, args, payload builders
+npm test                                    # CLI: detection, args, payloads,
+                                            # protocol children, catalog, dashboard
 cd backend && go test ./...                 # server, embedder, categorization
 ```
+
+The CLI suite spawns real protocol children — a stub agent speaking ACP and one
+speaking the codex app-server dialect — and asserts on the frames they receive,
+so the argv, the handshake, and the permission answers are proven rather than
+described. It needs no network, no database, and no signed-in agent CLI.
+
 
 The MariaDB-backed server tests skip unless a throwaway schema is named, so
 `go test ./...` passes on a machine with no database. To run them:
