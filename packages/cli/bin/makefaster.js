@@ -109,7 +109,9 @@ async function main() {
   const provider = await pickProvider(reports, args.cli);
   console.log(`  ${OK} using ${bold(provider.displayName)} ${dim(provider.executablePath)}\n`);
 
-  // 2. Import the top-50 improvement checklist (live board -> GitHub -> local fallback).
+  // 2. Import the improvement checklist (live board -> GitHub -> target repo ->
+  //    the catalog bundled with this CLI, which is what answers while the
+  //    public board is still filling up).
   const apiBase = resolveApiBase({ flag: args.api });
   let checklist;
   try {

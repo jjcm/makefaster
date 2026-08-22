@@ -20,15 +20,18 @@ The CLI owns this directory. Never commit it (it is already in
 | file | who writes it | what it is |
 |---|---|---|
 | `SKILL.md` | CLI | this file |
-| `improvements.json` | CLI | the imported top-50 improvement categories — your checklist |
+| `improvements.json` | CLI | the imported improvement categories — your checklist |
 | `state.json` | CLI creates, **you update `missStreak`** | loop limits and counters |
 | `results.json` | **you**, after every iteration | the session record the CLI reads back |
 
-`improvements.json` is a **guide of likely wins ranked by what actually worked
-across other sites — it is not a script to apply blindly.** Probe whether a
-category applies to this site before spending an iteration on it, skip what
-does not apply, and trust your own profiling evidence over the checklist when
-they disagree.
+`improvements.json` is a **guide of likely wins — it is not a script to apply
+blindly.** Probe whether a category applies to this site before spending an
+iteration on it, skip what does not apply, and trust your own profiling
+evidence over the checklist when they disagree. Its `source` field says where it
+came from. Live leaderboard rows are ranked by what actually worked across other
+sites and carry `count` and average deltas. The catalog bundled with the CLI —
+which is what you get while the public board is still filling up — is ordered by
+rough expected impact and carries no measurements at all.
 
 ## Step 0 — get the site running
 

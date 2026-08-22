@@ -66,8 +66,8 @@ export function getSites() {
 }
 
 /**
- * Improvement leaderboard categories, ranked (top 50 seeded; community
- * submissions can grow the list).
+ * Improvement leaderboard categories, ranked. Built entirely from community
+ * submissions, so the list starts empty and grows as loops report results.
  * Shape: { rank, name, description, count, avgImprovementMs,
  *          avgImprovementPct, icon }
  */

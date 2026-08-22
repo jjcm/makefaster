@@ -111,7 +111,7 @@ class LandingPage extends HTMLElement {
                 <span class="mono-label">Average Improvements</span>
                 <span class="dash">&mdash;</span>
                 <p>Based on sites that have completed 5+ improvement cycles.</p>
-                <div class="band-meta">Dataset: 1,248 sites<br>Updated: 05.12.2024</div>
+                <div class="band-meta">Dataset: public site leaderboard<br>Updated: continuously</div>
                 <div class="dots" aria-hidden="true"></div>
               </div>
 

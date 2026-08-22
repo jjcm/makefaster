@@ -182,6 +182,16 @@ class ImprovementLeaderboardPage extends HTMLElement {
     var start = (this.state.page - 1) * PER_PAGE;
     var pageRows = this.rows.slice(start, start + PER_PAGE);
 
+    if (!this.rows.length) {
+      this.els.tbody.innerHTML =
+        '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:34px 16px;">' +
+        "No categories yet &mdash; the board fills up as loops submit their improvements." +
+        "</td></tr>";
+      this.els.showing.textContent = "Showing 0 improvement categories";
+      this.els.pagination.innerHTML = "";
+      return;
+    }
+
     this.els.tbody.innerHTML = pageRows
       .map(function (r, i) {
         var rank = r.rank || start + i + 1;

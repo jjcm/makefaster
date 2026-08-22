@@ -18,7 +18,7 @@ Numbers below are from real labs. Copy the *shape* of the fix, not the file name
 This skill's loop discipline is packaged as [makefaster](https://github.com/jjcm/makefaster). Run `npx makefaster` in a site repo and it:
 
 1. detects the agent CLIs already installed (Cursor Agent, Claude Code, Codex — it drives *your* install and never bundles a model) and asks which one should run the loop **before anything starts**;
-2. imports the live top-50 improvement categories from the makefaster leaderboard (`/data/improvements.json`) as a checklist of likely wins — a guide of what has worked across sites, not a script to apply blindly;
+2. imports the top improvement categories from the makefaster leaderboard (`/data/improvements.json`), or the catalog bundled with the CLI while that board is still filling up, as a checklist of likely wins — a guide of what has worked across sites, not a script to apply blindly;
 3. profiles a user-felt metric (Lighthouse when available, else the lightest real measurement the machine can produce; cold + warm; median of ≥3 runs, spread = noise floor), then loops exactly as above: one hypothesis per iteration, measure, keep or revert with numbers;
 4. stops after **5 consecutive attempts with no serious improvement** — serious = beats the measured noise floor and moves the north-star metric by ≥5 % or ≥20 ms, and an FCP-only win that regresses LCP does not count — then offers three things: loop more (miss counter resets), submit the site's stats to the public [site leaderboard](https://github.com/jjcm/makefaster) (URL + favicon are displayed), and/or submit anonymous improvements data (category names + deltas only, no URL) that grows the shared checklist for everyone.
 

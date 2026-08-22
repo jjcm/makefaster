@@ -313,8 +313,11 @@ class SiteLeaderboardPage extends HTMLElement {
 
     if (!pageRows.length) {
       var empty = document.createElement("tr");
+      var message = this.rows.length
+        ? "No sites match your search."
+        : "No sites yet \u2014 the board fills up as loops submit their results.";
       empty.innerHTML =
-        '<td colspan="5" style="text-align:center;color:var(--muted);padding:34px 16px;">No sites match your search.</td>';
+        '<td colspan="5" style="text-align:center;color:var(--muted);padding:34px 16px;">' + message + "</td>";
       this.els.tbody.appendChild(empty);
     }
 
