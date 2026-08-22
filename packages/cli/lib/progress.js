@@ -74,13 +74,15 @@ function fromContentBlocks(blocks) {
  * previous line stays up, because a provider adding an event type must not turn
  * into noise on the user's terminal.
  *
- * @param {string} streamFormat from buildAgentInvocation()
+ * @param {string} streamFormat "acp", "codex-app-server", or "claude-stream-json"
  * @param {unknown} event a parsed JSON line
  * @returns {{tag: string, text: string}|null}
  */
 export function classifyEvent(streamFormat, event) {
   if (!event || typeof event !== "object") return null;
 
+  if (streamFormat === "acp") return classifyAcpUpdate(event);
+  if (streamFormat === "codex-app-server") return classifyCodexNotification(event);
   if (streamFormat === "codex-jsonl") return classifyCodexEvent(event);
 
   // Claude Code and Cursor print mode share the stream-json envelope.
@@ -95,6 +97,114 @@ export function classifyEvent(streamFormat, event) {
   }
   if (type === "tool_call" || type === "tool_use") return toolEntry(event.name || event.tool, event.input || event.args);
   return null;
+}
+
+/** ACP `session/update` payloads from `cursor-agent acp`. */
+function classifyAcpUpdate(update) {
+  const kind = String(update.sessionUpdate || "");
+  switch (kind) {
+    case "agent_message_chunk":
+      return { tag: "OBSERVE", text: trim(textOf(update.content)) || null };
+    case "agent_thought_chunk":
+      return { tag: "HYPOTHESIS", text: "thinking" };
+    case "user_message_chunk":
+      return null; // our own prompt echoed back
+    case "plan":
+      return { tag: "PLAN", text: describeAcpPlan(update.entries) };
+    case "tool_call":
+    case "tool_call_update":
+      return acpToolCall(update);
+    case "current_mode_update":
+      return { tag: "OBSERVE", text: `mode: ${trim(update.currentModeId || "changed")}` };
+    case "usage_update":
+      return null; // token accounting is not loop progress
+    default:
+      return null;
+  }
+}
+
+function textOf(content) {
+  if (typeof content === "string") return content;
+  if (content && typeof content === "object" && typeof content.text === "string") return content.text;
+  return "";
+}
+
+function describeAcpPlan(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) return "planning";
+  const pending = entries.find((entry) => entry?.status === "in_progress") ?? entries.find((entry) => entry?.status === "pending");
+  return trim(pending?.content || `${entries.length} planned steps`);
+}
+
+/**
+ * ACP tool calls carry a `kind` from a fixed vocabulary plus a human title, so
+ * the title is the label and the kind decides the loop step.
+ */
+function acpToolCall(update) {
+  const kind = String(update.kind || "other");
+  const title = trim(update.title || "");
+  const path = Array.isArray(update.locations) ? update.locations[0]?.path : null;
+  const where = path ? ` ${basename(path)}` : "";
+  switch (kind) {
+    case "edit":
+    case "delete":
+    case "move":
+      return { tag: "EXECUTE", text: title || `editing${where}` };
+    case "read":
+    case "search":
+      return { tag: "OBSERVE", text: title || `reading${where}` };
+    case "execute": {
+      const command = trim(update.rawInput?.command || title || "a command");
+      return { tag: MEASURING.test(command) ? "TEST" : "EXECUTE", text: title || `running ${command}` };
+    }
+    case "think":
+      return { tag: "HYPOTHESIS", text: title || "thinking" };
+    case "fetch":
+      return { tag: "OBSERVE", text: title || "fetching from the web" };
+    default:
+      return { tag: "EXECUTE", text: title || "working" };
+  }
+}
+
+/** `codex app-server` notifications. */
+function classifyCodexNotification({ method, params }) {
+  const name = String(method || "");
+  if (name === "turn/started") return { tag: "OBSERVE", text: "turn started" };
+  if (name === "turn/completed") return { tag: "RESULT", text: "turn completed" };
+  if (name === "turn/failed") return { tag: "RESULT", text: trim(params?.error?.message || "the turn failed") };
+  if (name === "thread/started") return { tag: "OBSERVE", text: "session started" };
+  if (name === "item/agentMessage/delta" || name === "item/reasoning/delta") return null; // token noise
+  if (name === "item/started" || name === "item/completed" || name === "item/updated") {
+    return codexItem(params?.item);
+  }
+  if (name.endsWith("/requestApproval")) return { tag: "EXECUTE", text: "approval requested" };
+  return null;
+}
+
+function codexItem(item) {
+  if (!item || typeof item !== "object") return null;
+  switch (String(item.type || "")) {
+    case "commandExecution": {
+      const command = trim(item.command || "a command");
+      return { tag: MEASURING.test(command) ? "TEST" : "EXECUTE", text: `running ${command}` };
+    }
+    case "fileChange": {
+      const first = Array.isArray(item.changes) ? item.changes[0] : null;
+      const path = first?.path || first?.file || null;
+      return { tag: "EXECUTE", text: path ? `editing ${basename(path)}` : "editing files" };
+    }
+    case "reasoning":
+      return { tag: "HYPOTHESIS", text: "thinking" };
+    case "agentMessage":
+      return { tag: "OBSERVE", text: trim(item.text || "writing a reply") };
+    case "webSearch":
+      return { tag: "OBSERVE", text: "searching the web" };
+    case "mcpToolCall":
+      return { tag: "EXECUTE", text: trim(`${item.server || "mcp"} ${item.tool || "tool"}`) };
+    case "todoList":
+      return { tag: "PLAN", text: "planning" };
+    default:
+      return null;
+  }
 }
 
 function classifyCodexEvent(event) {

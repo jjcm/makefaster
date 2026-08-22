@@ -15,6 +15,7 @@ import { USAGE, parseArgs } from "../lib/args.js";
 import { resolveApiBase } from "../lib/apiClient.js";
 import { detectProviders, missingCliGuidance } from "../lib/detect.js";
 import { runEndScreen } from "../lib/endscreen.js";
+import { listModels } from "../lib/agents/modelList.js";
 import { importChecklist } from "../lib/improvements.js";
 import { signedOutGuidance } from "../lib/invoke.js";
 import { createLoopView } from "../lib/loopView.js";
@@ -22,7 +23,6 @@ import { modelsForProvider, resolveModel } from "../lib/models.js";
 import { confirm, selectFrom } from "../lib/picker.js";
 import { createTui, tuiSupported } from "../lib/tui.js";
 import {
-  checkSignedIn,
   continuePrompt,
   kickoffPrompt,
   prepareSession,
@@ -102,20 +102,28 @@ async function pickProvider(reports, cliFlag) {
 }
 
 /**
- * Pick the model, ranked by intelligence. The catalog and its ranking come from
- * the CursorBench 3.2 snapshot in jjcm/bb-plugin-autorouter (see lib/models.js);
- * the ids are whatever the chosen CLI itself accepts.
+ * Pick the model, ranked by intelligence. The ranking comes from the CursorBench
+ * 3.2 snapshot in jjcm/bb-plugin-autorouter (see lib/models.js); the ids are
+ * whatever the chosen CLI itself accepts, reconciled against its live model list
+ * when makefaster can ask for one.
+ *
+ * The list probe is also where a signed-out install surfaces first, because
+ * asking a CLI what models an account can run requires that account.
  */
-async function pickModel(provider, modelFlag) {
+async function pickModel(provider, modelFlag, cwd) {
+  const live = await listModels({ provider, cwd });
+  if (live.authRequired) fail(signedOutGuidance(provider, live.detail), 3);
+  const options = { live: live.models };
+
   if (modelFlag) {
-    const model = resolveModel(provider.key, modelFlag);
+    const model = resolveModel(provider.key, modelFlag, options);
     if (model?.passthrough) {
       console.log(dim(`  note: ${model.id} is not one of makefaster's ranked picks for ${provider.displayName} — passing it to the CLI as given.`));
     }
     return model;
   }
 
-  const models = modelsForProvider(provider.key);
+  const models = modelsForProvider(provider.key, options);
   if (models.length === 0) return null;
   if (models.length === 1) return models[0];
   if (!process.stdin.isTTY) {
@@ -123,9 +131,11 @@ async function pickModel(provider, modelFlag) {
   }
 
   const ranked = models.filter((model) => model.score !== null).length;
-  console.log(`  ${bold(`Which model should ${provider.displayName} run?`)} ${dim(`(${ranked} of ${models.length} ranked by CursorBench 3.2)`)}`);
+  const source = live.models ? `from ${provider.displayName}'s own model list` : "from makefaster's catalog";
+  console.log(`  ${bold(`Which model should ${provider.displayName} run?`)} ${dim(`(${ranked} of ${models.length} ranked by CursorBench 3.2, ${source})`)}`);
+  console.log(dim("  the score ranks the model family; the id is what this CLI accepts"));
   if (ranked < models.length) {
-    console.log(dim(`  ${provider.displayName} only has ${ranked} model${ranked === 1 ? "" : "s"} in the snapshot; the rest are its own next-best models, unranked.`));
+    console.log(dim(`  ${provider.displayName} has ${ranked} model${ranked === 1 ? "" : "s"} in the snapshot; the rest are its own next-best models, unranked.`));
   }
 
   try {
@@ -142,16 +152,6 @@ async function pickModel(provider, modelFlag) {
     }
     throw err;
   }
-}
-
-/**
- * Confirm the install still holds credentials before handing it any work. This
- * only reads stored state; makefaster never starts a login, opens a browser, or
- * prints a device code.
- */
-function requireSignedIn(provider) {
-  const { state, detail } = checkSignedIn({ provider });
-  if (state === "signed-out") fail(signedOutGuidance(provider, detail), 3);
 }
 
 /**
@@ -200,11 +200,11 @@ async function main() {
   const provider = await pickProvider(reports, args.cli);
   console.log(`  ${OK} using ${bold(provider.displayName)} ${dim(provider.executablePath)}\n`);
 
-  // 2. Pick the model, then check the install is still signed in — makefaster
-  //    reuses its credentials and never starts a login of its own.
-  const model = await pickModel(provider, args.model);
+  // 2. Pick the model. makefaster reuses the credentials the CLI already stored
+  //    and never starts a login, opens a browser, or injects an API key — so a
+  //    signed-out install is reported here and the run stops.
+  const model = await pickModel(provider, args.model, cwd);
   if (model) console.log(`  ${OK} model ${bold(model.label)} ${dim(model.id)}\n`);
-  requireSignedIn(provider);
 
   // 3. Import the improvement checklist (live board -> GitHub -> target repo ->
   //    the catalog bundled with this CLI, which is what answers while the
@@ -243,9 +243,12 @@ async function main() {
     if (useTui) console.log(dim("  makefaster takes the screen while it runs; press q to stop the round.\n"));
     else console.log("");
 
-    const { exitCode, stderrTail, aborted } = useTui
+    const { exitCode, stderrTail, aborted, authRequired, detail } = useTui
       ? await runRoundInDashboard({ provider, prompt, cwd, model, paths, state })
       : await runAgent({ provider, prompt, cwd, model });
+
+    // A signed-out install can only be certain once the child has spoken.
+    if (authRequired) fail(signedOutGuidance(provider, detail || stderrTail), 3);
 
     if (aborted) console.log(yellow(`  stopped ${provider.displayName} at your request.`));
     else if (exitCode !== 0) {

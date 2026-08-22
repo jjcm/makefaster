@@ -1,16 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
-  HEADLESS_STDIO,
-  buildAgentInvocation,
-  buildAuthProbe,
-  interpretAuthProbe,
+  NEVER_INJECTED_ENV,
+  PROTOCOL_STDIO,
+  buildAgentSpawn,
+  childEnv,
+  claudePrintModeArgs,
+  isAuthRequiredError,
   signedOutGuidance,
 } from "../lib/invoke.js";
-import { runAgent } from "../lib/session.js";
+import { loadClaudeAgentSdk } from "../lib/agents/claudeCode.js";
 
 const PROVIDERS = {
   cursor: { key: "cursor", displayName: "Cursor Agent", executablePath: "/usr/local/bin/cursor-agent", signIn: "cursor-agent login" },
@@ -18,22 +17,16 @@ const PROVIDERS = {
   codex: { key: "codex", displayName: "Codex", executablePath: "/usr/local/bin/codex", signIn: "codex login" },
 };
 
-function invoke(key, overrides = {}) {
-  return buildAgentInvocation({
-    provider: PROVIDERS[key],
-    prompt: "run the makefaster loop",
-    cwd: "/repo",
-    env: { HOME: "/home/dev", PATH: "/usr/bin" },
-    ...overrides,
-  });
-}
+const ENV = { HOME: "/home/dev", PATH: "/usr/bin" };
+const spawnFor = (key, overrides = {}) => buildAgentSpawn({ provider: PROVIDERS[key], cwd: "/repo", env: ENV, ...overrides });
 
-test("no provider ever inherits stdio or attaches the user's stdin", () => {
+test("every provider is a piped protocol child, never an inherited TUI", () => {
   for (const key of Object.keys(PROVIDERS)) {
-    const { options } = invoke(key);
-    assert.deepEqual(options.stdio, HEADLESS_STDIO, key);
+    const { options } = spawnFor(key);
+    assert.deepEqual(options.stdio, PROTOCOL_STDIO, key);
     assert.notEqual(options.stdio, "inherit", key);
-    assert.equal(options.stdio[0], "ignore", `${key} must not attach the TTY to stdin`);
+    // stdin is a pipe we write protocol frames into — not the user's terminal.
+    assert.equal(options.stdio[0], "pipe", key);
     assert.equal(options.stdio[1], "pipe", key);
     assert.equal(options.stdio[2], "pipe", key);
     assert.equal(options.windowsHide, true, key);
@@ -41,22 +34,46 @@ test("no provider ever inherits stdio or attaches the user's stdin", () => {
   }
 });
 
-test("the child inherits the user's environment so existing credentials are reused", () => {
-  for (const key of Object.keys(PROVIDERS)) {
-    const { options } = invoke(key);
-    assert.equal(options.env.HOME, "/home/dev", key);
-    assert.equal(options.env.NO_COLOR, "1", key);
-    assert.equal(options.env.FORCE_COLOR, "0", key);
+test("cursor launches ACP with --model before the subcommand", () => {
+  // bb composes the model flag as prefixArgs ahead of the launch spec's own
+  // args, so `--model` is a global option and `acp` stays last.
+  const withModel = spawnFor("cursor", { model: "claude-fable-5-thinking-medium" });
+  assert.equal(withModel.protocol, "acp");
+  assert.equal(withModel.command, "/usr/local/bin/cursor-agent");
+  assert.deepEqual(withModel.args, ["--model", "claude-fable-5-thinking-medium", "acp"]);
+  assert.equal(withModel.args.at(-1), "acp");
+
+  // No model: the account default, not a guessed id.
+  assert.deepEqual(spawnFor("cursor").args, ["acp"]);
+});
+
+test("cursor gets no print mode, no prompt in argv, and no permission flag", () => {
+  const { args } = spawnFor("cursor", { model: "gpt-5.6-sol-medium" });
+  assert.ok(!args.includes("-p"), "print mode is not the ACP path");
+  assert.ok(!args.includes("--print"));
+  assert.ok(!args.includes("--output-format"));
+  // --force / --yolo / --trust / --approve-mcps belong to other agents; Cursor
+  // has no permission flag, so permission is answered over the protocol.
+  for (const flag of ["--force", "--yolo", "--trust", "--approve-mcps", "--always-approve"]) {
+    assert.ok(!args.includes(flag), `cursor must not be passed ${flag}`);
   }
-  // CODEX_HOME is a credential location, so it must survive into the child.
-  const { options } = invoke("codex", { env: { HOME: "/home/dev", CODEX_HOME: "/home/dev/.codex-work" } });
-  assert.equal(options.env.CODEX_HOME, "/home/dev/.codex-work");
+  assert.ok(!args.some((arg) => arg.includes(" ")), "no prompt text rides argv");
+});
+
+test("codex launches the app-server and pins no model on the command line", () => {
+  const spec = spawnFor("codex", { model: "gpt-5.6-sol" });
+  assert.equal(spec.protocol, "codex-app-server");
+  assert.deepEqual(spec.args, ["app-server"]);
+  // The model and the permission posture ride thread/start and turn/start.
+  assert.ok(!spec.args.includes("--model"));
+  assert.ok(!spec.args.includes("exec"));
+  assert.ok(!spec.args.includes("--full-auto"));
+  assert.ok(!spec.args.includes("--sandbox"));
 });
 
 test("no provider argv can start a login, a browser, or a device-code flow", () => {
   for (const key of Object.keys(PROVIDERS)) {
-    const { args } = invoke(key, { model: "some-model" });
-    const argv = args.join(" ");
+    const argv = spawnFor(key, { model: "some-model" }).args.join(" ");
     assert.doesNotMatch(argv, /\blogin\b/, key);
     assert.doesNotMatch(argv, /\blogout\b/, key);
     assert.doesNotMatch(argv, /device.?code/i, key);
@@ -64,174 +81,101 @@ test("no provider argv can start a login, a browser, or a device-code flow", () 
   }
 });
 
-test("cursor: print mode, auto-approved, model passed through", () => {
-  const { command, args, streamFormat } = invoke("cursor", { model: "claude-fable-5-max" });
-  assert.equal(command, "/usr/local/bin/cursor-agent");
-  assert.equal(streamFormat, "cursor-stream-json");
-  assert.deepEqual(args, [
-    "-p",
-    "--output-format", "stream-json",
-    "--force",
-    "--trust",
-    "--approve-mcps",
-    "--workspace", "/repo",
-    "--model", "claude-fable-5-max",
-    "run the makefaster loop",
-  ]);
-  // The prompt is the last argument, so nothing is ever read from stdin.
-  assert.equal(args.at(-1), "run the makefaster loop");
+test("the child environment is the user's own, with no API key injected", () => {
+  const env = childEnv({ HOME: "/home/dev", CODEX_HOME: "/home/dev/.codex-work", PATH: "/usr/bin" });
+  assert.deepEqual(env, { HOME: "/home/dev", CODEX_HOME: "/home/dev/.codex-work", PATH: "/usr/bin" });
+  // An injected key fights the OAuth credentials the CLI already stored.
+  for (const key of NEVER_INJECTED_ENV) assert.ok(!(key in env), `${key} must never be set by makefaster`);
+
+  for (const key of Object.keys(PROVIDERS)) {
+    const { options } = spawnFor(key);
+    assert.equal(options.env.HOME, "/home/dev", key);
+    for (const name of NEVER_INJECTED_ENV) assert.ok(!(name in options.env), `${key} must not receive ${name}`);
+  }
+  // A key the user set themselves is theirs to keep — makefaster only refuses to add one.
+  assert.equal(childEnv({ ANTHROPIC_API_KEY: "sk-user-own" }).ANTHROPIC_API_KEY, "sk-user-own");
 });
 
-test("claude: print mode with stream-json, permissions skipped, model passed through", () => {
-  const { args, streamFormat } = invoke("claude", { model: "claude-fable-5" });
-  assert.equal(streamFormat, "claude-stream-json");
+test("claude print-mode fallback loads ~/.claude settings and skips permissions", () => {
+  const args = claudePrintModeArgs({ model: "claude-fable-5" });
   assert.deepEqual(args, [
     "-p",
+    "--input-format", "stream-json",
     "--output-format", "stream-json",
     "--verbose",
+    "--setting-sources", "user,project,local",
+    "--permission-mode", "bypassPermissions",
     "--dangerously-skip-permissions",
     "--model", "claude-fable-5",
-    "run the makefaster loop",
   ]);
+  // The prompt is a stdin frame, so --input-format is what keeps it off argv.
+  assert.ok(args.includes("--input-format"));
+  assert.ok(!args.some((arg) => arg.includes(" ")));
 });
 
-test("claude: as root, keep the auto-approve intent with a mode root accepts", () => {
-  // Claude Code exits before the session starts if asked to skip permissions
-  // as root, so the flag is swapped rather than dropped silently.
-  const { args } = invoke("claude", { model: "claude-sonnet-5", isRoot: true });
+test("claude as root keeps the auto-approve intent with a mode root accepts", () => {
+  // Claude Code exits before the session starts if asked to skip permissions as
+  // root, so the flag is swapped rather than dropped silently.
+  const args = claudePrintModeArgs({ model: "claude-sonnet-5", isRoot: true });
   assert.ok(!args.includes("--dangerously-skip-permissions"));
+  assert.ok(!args.includes("bypassPermissions"));
   assert.equal(args[args.indexOf("--permission-mode") + 1], "acceptEdits");
-  assert.deepEqual(args.slice(-3), ["--model", "claude-sonnet-5", "run the makefaster loop"]);
-});
-
-test("codex: exec, workspace-write sandbox, approvals never, model passed through", () => {
-  const { args, streamFormat } = invoke("codex", { model: "gpt-5.6-sol" });
-  assert.equal(streamFormat, "codex-jsonl");
-  assert.deepEqual(args, [
-    "exec",
-    "--sandbox", "workspace-write",
-    "-c", 'approval_policy="never"',
-    "--skip-git-repo-check",
-    "--json",
-    "--cd", "/repo",
-    "--model", "gpt-5.6-sol",
-    "run the makefaster loop",
-  ]);
-  // --full-auto was removed from the Codex CLI; never send it.
-  assert.ok(!args.includes("--full-auto"));
-});
-
-test("each provider's headless entry point is present and its TUI is not", () => {
-  assert.ok(invoke("cursor").args.includes("-p"));
-  assert.ok(invoke("claude").args.includes("-p"));
-  assert.equal(invoke("codex").args[0], "exec");
+  assert.deepEqual(args.slice(-2), ["--model", "claude-sonnet-5"]);
 });
 
 test("omitting the model omits the flag rather than sending an empty value", () => {
-  for (const key of Object.keys(PROVIDERS)) {
-    assert.ok(!invoke(key).args.includes("--model"), key);
-  }
+  assert.ok(!claudePrintModeArgs().includes("--model"));
+  assert.ok(!spawnFor("cursor").args.includes("--model"));
 });
 
 test("an unknown provider fails loudly instead of falling back to a TUI", () => {
   assert.throws(
-    () => buildAgentInvocation({ provider: { key: "gemini", displayName: "Gemini", executablePath: "gemini" }, prompt: "x", cwd: "/repo" }),
-    /no headless invocation is defined/,
+    () => buildAgentSpawn({ provider: { key: "gemini", displayName: "Gemini", executablePath: "gemini" }, cwd: "/repo" }),
+    /no protocol invocation is defined/,
   );
 });
 
-test("auth probes are read-only, piped, and never a login", () => {
-  const expected = {
-    cursor: ["status", "--format", "json"],
-    claude: ["auth", "status"],
-    codex: ["login", "status"],
-  };
-  for (const [key, args] of Object.entries(expected)) {
-    const probe = buildAuthProbe({ provider: PROVIDERS[key], env: {} });
-    assert.deepEqual(probe.args, args, key);
-    assert.deepEqual(probe.options.stdio, HEADLESS_STDIO, key);
+test("isAuthRequiredError only fires on the child's own auth words", () => {
+  for (const text of [
+    "Authentication required",
+    "You are not logged in",
+    "Not signed in. Run `cursor-agent login`.",
+    "unauthenticated",
+    "OAuth token has expired",
+    "invalid credentials",
+    "HTTP 401 Unauthorized",
+  ]) {
+    assert.equal(isAuthRequiredError(text), true, text);
   }
-  // "login status" only reports state; a bare "login" would start a flow.
-  assert.deepEqual(buildAuthProbe({ provider: PROVIDERS.codex, env: {} }).args.slice(-1), ["status"]);
-  assert.equal(buildAuthProbe({ provider: { key: "gemini" }, env: {} }), null);
-});
-
-test("interpretAuthProbe only reports signed-out on a positive signal", () => {
-  assert.equal(interpretAuthProbe({ status: 0 }).state, "signed-in");
-  assert.equal(interpretAuthProbe({ status: 1, stdout: "Not logged in" }).state, "signed-out");
-  const jsonProbe = interpretAuthProbe({ status: 0, stdout: '{"loggedIn": false}' });
-  assert.equal(jsonProbe.state, "signed-out");
-  // A raw JSON blob is not a sentence to show the user.
-  assert.equal(jsonProbe.detail, null);
-  assert.equal(interpretAuthProbe({ status: 1, stdout: "Not logged in" }).detail, "Not logged in");
-  assert.equal(interpretAuthProbe({ status: 1, signedOutExitCodes: [1] }).state, "signed-out");
-
-  // A CLI too old to know the probe says nothing about credentials.
-  assert.equal(interpretAuthProbe({ status: 2, stderr: "error: unrecognized subcommand 'auth'" }).state, "unknown");
-  assert.equal(interpretAuthProbe({ status: 1, stderr: "Usage: codex [OPTIONS]" }).state, "unknown");
-  assert.equal(interpretAuthProbe({ status: null, timedOut: true }).state, "unknown");
-  assert.equal(interpretAuthProbe({ status: null, error: new Error("ENOENT") }).state, "unknown");
-  assert.equal(interpretAuthProbe({ status: 7, stderr: "something else entirely" }).state, "unknown");
+  for (const text of [
+    "",
+    "ENOENT: no such file or directory",
+    "codex app-server exited (code 1, signal null)",
+    "the model refused to answer",
+    "Error: connection reset",
+  ]) {
+    assert.equal(isAuthRequiredError(text), false, JSON.stringify(text));
+  }
+  assert.equal(isAuthRequiredError(new Error("Authentication required")), true);
+  assert.equal(isAuthRequiredError(null, undefined, "not logged in"), true);
 });
 
 test("signedOutGuidance points at the native CLI and never at makefaster", () => {
   const message = signedOutGuidance(PROVIDERS.claude, "Not logged in");
-  assert.match(message, /Claude Code is signed out/);
+  assert.match(message, /Claude Code needs a sign-in/);
   assert.match(message, /claude auth login/);
   assert.match(message, /rerun npx makefaster/);
-  assert.equal(message.split("\n").length, 1);
+  assert.equal(message.split("\n").length, 1, "a multi-line lecture is not the point");
+  // A multi-line detail is collapsed rather than pasted in.
+  assert.equal(signedOutGuidance(PROVIDERS.codex, "line one\nline two").split("\n").length, 1);
 });
 
-// A real spawn, to prove the contract end to end: the child sees the headless
-// argv, has no stdin, and its stdout never reaches this terminal.
-test("runAgent spawns hidden and returns the child's exit code", { skip: process.platform === "win32" }, async () => {
-  const dir = mkdtempSync(join(tmpdir(), "makefaster-invoke-"));
-  const fake = join(dir, "fake-agent");
-  writeFileSync(fake, [
-    "#!/usr/bin/env node",
-    "const argv = process.argv.slice(2);",
-    "process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init' }) + '\\n');",
-    "process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', num_turns: 2, argv, isTTY: Boolean(process.stdin.isTTY) }) + '\\n');",
-    "require('node:fs').writeFileSync(process.env.FAKE_AGENT_REPORT, JSON.stringify({ argv, stdinIsTty: Boolean(process.stdin.isTTY) }));",
-    "process.exit(3);",
-  ].join("\n"));
-  chmodSync(fake, 0o755);
-  const reportPath = join(dir, "report.json");
-
-  const written = [];
-  const result = await runAgent({
-    provider: { key: "claude", displayName: "Fake Claude", executablePath: fake },
-    prompt: "loop please",
-    cwd: dir,
-    model: { id: "claude-fable-5", label: "Fable 5" },
-    env: { ...process.env, FAKE_AGENT_REPORT: reportPath },
-    isRoot: false,
-    reporter: {
-      eventCount: 0,
-      lastLabel: null,
-      update: (entry) => written.push(entry?.text ?? entry),
-      done: () => written.push("[done]"),
-    },
-  });
-
-  assert.equal(result.exitCode, 3);
-  const report = JSON.parse((await import("node:fs")).readFileSync(reportPath, "utf8"));
-  assert.equal(report.stdinIsTty, false, "the child must not see a TTY on stdin");
-  assert.ok(report.argv.includes("-p"));
-  assert.ok(report.argv.includes("--dangerously-skip-permissions"));
-  assert.deepEqual(report.argv.slice(-3), ["--model", "claude-fable-5", "loop please"]);
-  // The child's stream became progress labels, not raw terminal output.
-  assert.deepEqual(written, ["session started", "agent finished after 2 turns", "[done]"]);
-});
-
-test("runAgent reports a missing binary instead of throwing a raw spawn error", async () => {
-  await assert.rejects(
-    runAgent({
-      provider: { key: "codex", displayName: "Codex", executablePath: join(tmpdir(), "makefaster-not-a-real-binary") },
-      prompt: "x",
-      cwd: tmpdir(),
-      reporter: { eventCount: 0, lastLabel: null, update: () => {}, done: () => {} },
-    }),
-    /failed to launch Codex/,
-  );
+test("the Agent SDK is optional: a missing module is not an error", async () => {
+  assert.equal(await loadClaudeAgentSdk(() => Promise.reject(new Error("Cannot find module"))), null);
+  // A module without query() is not the SDK we can drive.
+  assert.equal(await loadClaudeAgentSdk(() => Promise.resolve({})), null);
+  const fake = { query: () => {} };
+  assert.equal(await loadClaudeAgentSdk(() => Promise.resolve(fake)), fake);
+  // Reality check: this repo ships no dependencies, so the real import fails.
+  assert.equal(await loadClaudeAgentSdk(), null);
 });

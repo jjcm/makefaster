@@ -1,194 +1,148 @@
 /**
- * How makefaster talks to an installed agent CLI: as a hidden worker, the way
- * bb's provider bridges do (get-bb/bb `plugins/provider-*`). Two rules come
- * straight from those bridges:
+ * How makefaster talks to an installed agent CLI: as a non-TTY protocol child,
+ * the way bb's provider bridges do (get-bb/bb `plugins/provider-*`).
  *
- *   1. stdio is always piped — never `"inherit"`. bb's claude bridge
- *      (`bridge/sdk-session.ts`) and codex bridge (`bridge/app-server-connection.ts`)
- *      both spawn with `["pipe","pipe","pipe"]`, so the other product's TUI
- *      never draws and makefaster keeps the terminal.
- *   2. stdin is never the user's TTY. Attaching it is what makes these CLIs
- *      decide a human is present and start asking: login, workspace trust,
- *      per-tool permission cards. We pass the prompt as an argument and give
- *      the child `"ignore"` for stdin.
+ * None of these are the product's interactive CLI, and none of them is a
+ * print-mode wrapper around it where a protocol exists:
  *
- * Permissions are pre-granted rather than prompted, because the user already
- * opted into a local performance loop by running makefaster:
- *   - Claude Code  `--dangerously-skip-permissions` (bb sets the equivalent
- *     `permissionMode: "bypassPermissions"` + `allowDangerouslySkipPermissions`)
- *   - Codex        `--sandbox workspace-write` with `approval_policy = "never"`
- *     (bb's codex session params use the same never/auto-approve posture)
- *   - Cursor       `--force --trust --approve-mcps`, so neither command
- *     approval nor MCP approval nor workspace trust pops a card
+ *   Cursor       `cursor-agent --model <id> acp` — Agent Client Protocol over
+ *                stdio. The model flag is a *global* option and goes before the
+ *                `acp` subcommand (bb composes it as `prefixArgs` ahead of the
+ *                launch spec's own args). Cursor has no permission flag —
+ *                `--force`/`--yolo` belong to other agents — so permission is
+ *                granted by answering `session/request_permission`.
+ *   Claude Code  `@anthropic-ai/claude-agent-sdk` `query()`, which owns the CLI
+ *                pipe itself. Print mode is only the zero-dependency fallback.
+ *   Codex        `codex app-server` — JSON-RPC; the model is set on
+ *                `thread/start`, not on the command line.
  *
- * Credentials are reused, never created. Nothing here runs `auth login`, opens
- * a browser, or prints a device code; if the install is signed out we say so
- * once and stop.
+ * Credentials are reused, never created or supplied:
+ *
+ * - No `login` subcommand is ever run, no browser is opened, no device code is
+ *   printed.
+ * - No API key is injected. ANTHROPIC_API_KEY, CURSOR_API_KEY and
+ *   OPENAI_API_KEY are never set by makefaster — an injected key fights the
+ *   OAuth credentials the CLI already stored and can itself cause prompts. The
+ *   child inherits the user's environment untouched, so it finds ~/.claude,
+ *   ~/.cursor and CODEX_HOME/~/.codex exactly as the native CLI does.
+ * - A signed-out install therefore fails with an auth-required error from the
+ *   child. That is the expected signal: makefaster reports it in one line and
+ *   stops rather than trying to fix it.
+ *
+ * Because the child has no UI, makefaster must answer its permission and
+ * approval requests itself, or the hidden child blocks forever with nothing on
+ * screen. Each agent module does that (see lib/agents/).
  */
 
-/** Piped, TTY-free stdio: nothing the child writes reaches the terminal raw. */
-export const HEADLESS_STDIO = ["ignore", "pipe", "pipe"];
+/** stdin is a pipe we own for protocol frames, never the user's terminal. */
+export const PROTOCOL_STDIO = ["pipe", "pipe", "pipe"];
 
-/** Codex refuses to ask a human here; bb sends the same policy per turn. */
-const CODEX_APPROVAL_POLICY_OVERRIDE = 'approval_policy="never"';
+/** Keys makefaster must never set; an injected key can fight stored OAuth. */
+export const NEVER_INJECTED_ENV = ["ANTHROPIC_API_KEY", "CURSOR_API_KEY", "OPENAI_API_KEY", "CLAUDE_API_KEY", "CODEX_API_KEY"];
 
-function headlessEnv(env) {
-  // Inherit the user's environment so ~/.claude, ~/.cursor and
-  // CODEX_HOME/~/.codex credentials are found exactly as the native CLI finds
-  // them. Only the two color knobs are forced, because the streams we parse
-  // are JSON and ANSI escapes in them are noise.
-  return { ...env, NO_COLOR: "1", FORCE_COLOR: "0" };
+/**
+ * The child's environment: the user's own, unmodified. Anything makefaster added
+ * here would be a credential decision it has no business making.
+ */
+export function childEnv(env = process.env) {
+  return { ...env };
 }
 
 /**
- * Build the headless invocation for a provider.
+ * The spawn spec for a provider's protocol child.
  *
  * @param {object} args
  * @param {{key: string, displayName: string, executablePath: string}} args.provider
- * @param {string} args.prompt
+ * @param {string|null} [args.model] model id, for providers that pin it at launch
  * @param {string} args.cwd
- * @param {string|null} [args.model] model id passed through to the CLI
  * @param {NodeJS.ProcessEnv} [args.env]
- * @param {boolean} [args.isRoot] Claude Code exits rather than skip permissions as root
- * @returns {{command: string, args: string[], options: object, streamFormat: string}}
+ * @returns {{command: string, args: string[], options: object, protocol: string}}
  */
-export function buildAgentInvocation({ provider, prompt, cwd, model = null, env = process.env, isRoot = false }) {
-  const options = { cwd, env: headlessEnv(env), stdio: HEADLESS_STDIO, windowsHide: true };
+export function buildAgentSpawn({ provider, model = null, cwd, env = process.env }) {
+  const options = { cwd, env: childEnv(env), stdio: PROTOCOL_STDIO, windowsHide: true };
 
   switch (provider.key) {
     case "cursor": {
-      // `-p` is print mode: full tool access, no interactive UI. `--force`
-      // allows commands unless explicitly denied, `--trust` accepts the
-      // workspace without prompting (headless only), `--approve-mcps` keeps
-      // MCP servers from raising approval cards.
-      const argv = [
-        "-p",
-        "--output-format", "stream-json",
-        "--force",
-        "--trust",
-        "--approve-mcps",
-        "--workspace", cwd,
-      ];
-      if (model) argv.push("--model", model);
-      argv.push(prompt);
-      return { command: provider.executablePath, args: argv, options, streamFormat: "cursor-stream-json" };
+      // `--model` is a global option, so it precedes the subcommand. Without a
+      // model the account default is used rather than a guessed id.
+      const argv = model ? ["--model", model, "acp"] : ["acp"];
+      return { command: provider.executablePath, args: argv, options, protocol: "acp" };
     }
 
-    case "claude": {
-      // `-p --output-format stream-json --verbose` is Claude Code's print-mode
-      // event stream (verbose is required alongside stream-json).
-      const argv = ["-p", "--output-format", "stream-json", "--verbose"];
-      // Claude Code refuses to skip permissions as root and exits before the
-      // session starts, so keep the auto-approve intent with the strongest
-      // mode root accepts (bb drops the flag the same way).
-      if (isRoot) argv.push("--permission-mode", "acceptEdits");
-      else argv.push("--dangerously-skip-permissions");
-      if (model) argv.push("--model", model);
-      argv.push(prompt);
-      return { command: provider.executablePath, args: argv, options, streamFormat: "claude-stream-json" };
-    }
-
-    case "codex": {
-      // `codex exec` is the non-interactive entry point; it already defaults to
-      // an approval policy of never, and the -c override keeps that true on
-      // installs configured otherwise. --sandbox workspace-write lets the loop
-      // edit the repo it was pointed at. --full-auto is deliberately absent:
-      // it was removed from the CLI.
-      const argv = [
-        "exec",
-        "--sandbox", "workspace-write",
-        "-c", CODEX_APPROVAL_POLICY_OVERRIDE,
-        "--skip-git-repo-check",
-        "--json",
-        "--cd", cwd,
-      ];
-      if (model) argv.push("--model", model);
-      argv.push(prompt);
-      return { command: provider.executablePath, args: argv, options, streamFormat: "codex-jsonl" };
-    }
-
-    default:
-      throw new Error(`no headless invocation is defined for provider "${provider.key}"`);
-  }
-}
-
-/**
- * A read-only "are you still signed in?" probe. Never a login: each of these
- * only reports stored credential state.
- *
- * @returns {{command: string, args: string[], options: object, signedOutExitCodes: number[]}|null}
- */
-export function buildAuthProbe({ provider, env = process.env }) {
-  const options = { env: headlessEnv(env), stdio: HEADLESS_STDIO, windowsHide: true, encoding: "utf8" };
-  switch (provider.key) {
-    case "cursor":
-      return { command: provider.executablePath, args: ["status", "--format", "json"], options, signedOutExitCodes: [] };
-    case "claude":
-      // Documented: exits 0 when logged in, 1 when not.
-      return { command: provider.executablePath, args: ["auth", "status"], options, signedOutExitCodes: [1] };
     case "codex":
-      return { command: provider.executablePath, args: ["login", "status"], options, signedOutExitCodes: [] };
+      // The model rides thread/start; nothing about it belongs in argv.
+      return { command: provider.executablePath, args: ["app-server"], options, protocol: "codex-app-server" };
+
+    case "claude":
+      // The Agent SDK spawns the CLI itself; this is the print-mode fallback's
+      // spec, and lib/agents/claudeCode.js decides which path is taken.
+      return { command: provider.executablePath, args: claudePrintModeArgs({ model, isRoot: isRootProcess() }), options, protocol: "claude-print" };
+
     default:
-      return null;
+      throw new Error(`no protocol invocation is defined for provider "${provider.key}"`);
   }
 }
 
-const SIGNED_OUT_PATTERNS = [
-  /not\s+(?:currently\s+)?(?:logged|signed)\s*-?\s*in/i,
-  /logged\s+out/i,
-  /no\s+(?:stored\s+)?credentials/i,
-  /unauthenticated/i,
-  /"logged_?in"\s*:\s*false/i,
-  /"authenticated"\s*:\s*false/i,
-  /"is_?logged_?in"\s*:\s*false/i,
-];
+function isRootProcess() {
+  return typeof process.getuid === "function" ? process.getuid() === 0 : false;
+}
 
-// A CLI too old to know the probe subcommand fails for reasons that say nothing
-// about credentials. Those runs proceed rather than blocking the user.
-const INCONCLUSIVE_PATTERNS = [
-  /unknown\s+(?:command|option|subcommand|argument)/i,
-  /unrecognized\s+(?:subcommand|option|argument)/i,
-  /unexpected\s+argument/i,
-  /invalid\s+(?:command|subcommand)/i,
-  /did\s+you\s+mean/i,
-  /^\s*usage:/im,
+/**
+ * Print-mode argv for Claude Code — the fallback when the Agent SDK is not
+ * installed. `--setting-sources user,project,local` mirrors what bb passes as
+ * the SDK's `settingSources`, so ~/.claude OAuth and settings load exactly as
+ * they do for the native CLI.
+ *
+ * The prompt is not here: it is written to the child's stdin as a stream-json
+ * frame, so no prompt ever rides argv and stdin is never the user's TTY.
+ */
+export function claudePrintModeArgs({ model = null, isRoot = false } = {}) {
+  const argv = [
+    "-p",
+    "--input-format", "stream-json",
+    "--output-format", "stream-json",
+    "--verbose",
+    "--setting-sources", "user,project,local",
+  ];
+  // Claude Code refuses to skip permissions as root and exits before the
+  // session starts, so keep the auto-approve intent with the strongest mode
+  // root accepts. bb drops the SDK flags the same way.
+  if (isRoot) argv.push("--permission-mode", "acceptEdits");
+  else argv.push("--permission-mode", "bypassPermissions", "--dangerously-skip-permissions");
+  if (model) argv.push("--model", model);
+  return argv;
+}
+
+const AUTH_REQUIRED_PATTERNS = [
+  /authentication required/i,
+  /not\s+(?:currently\s+)?(?:logged|signed)\s*-?\s*in/i,
+  /unauthenticated/i,
+  /please\s+(?:run|sign|log)\b[^.]{0,40}\blog\s?in/i,
+  /\b(?:invalid|expired|missing)\s+(?:credentials|token|session)\b/i,
+  /oauth token has expired/i,
+  /run\s+`?[\w-]+ (?:auth )?login`?/i,
+  /401\b.*unauthor/i,
 ];
 
 /**
- * Classify a finished auth probe.
+ * Does this failure mean "sign in first" rather than "something broke"?
  *
- * Only a positive signal marks an install signed out — an unexplained failure
- * is "unknown" and the loop proceeds, because wrongly telling somebody to log
- * in again is worse than letting the real run report the real error.
- *
- * @returns {{state: "signed-in"|"signed-out"|"unknown", detail: string|null}}
+ * bb classifies the same way (`isAuthRequiredModelListError` in its ACP
+ * bridge): match on the child's own words. Anything unrecognised is left as a
+ * normal error, because telling somebody to log in again when that is not the
+ * problem sends them down the wrong path.
  */
-export function interpretAuthProbe({ status, stdout = "", stderr = "", error = null, timedOut = false, signedOutExitCodes = [] }) {
-  const output = `${stdout}\n${stderr}`;
-  if (SIGNED_OUT_PATTERNS.some((pattern) => pattern.test(output))) {
-    return { state: "signed-out", detail: firstMeaningfulLine(output) };
-  }
-  if (error || timedOut) return { state: "unknown", detail: timedOut ? "the probe timed out" : String(error?.message || error) };
-  if (status === 0) return { state: "signed-in", detail: null };
-  if (INCONCLUSIVE_PATTERNS.some((pattern) => pattern.test(output))) {
-    return { state: "unknown", detail: "this CLI does not support the sign-in probe" };
-  }
-  if (signedOutExitCodes.includes(status)) {
-    return { state: "signed-out", detail: firstMeaningfulLine(output) };
-  }
-  return { state: "unknown", detail: firstMeaningfulLine(output) };
-}
-
-function firstMeaningfulLine(output) {
-  const line = output.split(/\r?\n/).map((l) => l.trim()).find((l) => l.length > 0);
-  if (!line) return null;
-  // A raw JSON status blob is the machine's answer, not a sentence for a human.
-  if (/^[[{]/.test(line)) return null;
-  return line.slice(0, 160);
+export function isAuthRequiredError(...parts) {
+  const text = parts
+    .map((part) => (part instanceof Error ? part.message : typeof part === "string" ? part : ""))
+    .join("\n");
+  if (text.trim() === "") return false;
+  return AUTH_REQUIRED_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 /** The one line makefaster prints instead of ever starting a login flow. */
 export function signedOutGuidance(provider, detail) {
   const command = provider.signIn || `${provider.executablePath} login`;
-  return `${provider.displayName} is signed out${detail ? ` (${detail})` : ""} — sign in once with the native CLI (\`${command}\`), then rerun npx makefaster.`;
+  const because = detail ? ` (${String(detail).split(/\r?\n/)[0].slice(0, 120)})` : "";
+  return `${provider.displayName} needs a sign-in${because} — sign in once with the native CLI (\`${command}\`), then rerun npx makefaster.`;
 }

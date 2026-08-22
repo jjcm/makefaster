@@ -8,15 +8,25 @@
  *   https://github.com/jjcm/bb-plugin-autorouter/blob/main/benchmarks.ts
  * That file scores family x reasoning-level pairs; FAMILY_BEST below keeps the
  * best score per family, which is what "most intelligent" means here. To
- * refresh the ranking, re-read that file and update FAMILY_BEST — the per
- * provider lists stay as they are unless a CLI's own model list changed.
+ * refresh the ranking, re-read that file and update FAMILY_BEST.
  *
- * Model ids are the strings each CLI actually accepts, not invented names:
- *   - Cursor      `cursor-agent --list-models` output (families x effort tails)
- *   - Claude Code the account-scoped catalog Claude Code reports at startup
- *   - Codex       `model/list` from `codex app-server`
- * Families the snapshot does not score are still offered when a provider has
- * fewer than five ranked models, but they sort last and say so.
+ * The three providers do not share a model-id namespace, and none of the ids
+ * here is invented:
+ *
+ *   Cursor       ids are *variants*: family plus reasoning effort plus an
+ *                optional `-fast` twin, e.g. `claude-fable-5-thinking-medium`.
+ *                They come from `cursor-agent --list-models`, and the picker
+ *                intersects this catalog with that live list when it can run it.
+ *   Claude Code  ids carry no effort suffix — reasoning is a separate field —
+ *                and some carry a bracketed context parameter that is part of
+ *                the id, e.g. `claude-opus-4-8[1m]`. This is bb's curated
+ *                catalog (plugins/provider-claude-code/src/model-catalog-data.ts),
+ *                which is exactly five rows.
+ *   Codex        plain family ids from the app-server's `model/list`.
+ *
+ * A family the snapshot does not score is never given a made-up number: it
+ * sorts after every scored model and says so. Codex only has four scored
+ * families, so its fifth slot is filled from the live list or left empty.
  */
 
 /** Best CursorBench 3.2 score per model family, and the effort it came from. */
@@ -34,8 +44,8 @@ export const FAMILY_BEST = new Map([
 ]);
 
 /**
- * Longest-match family lookup, so `claude-opus-4-8-max` does not resolve
- * through a shorter family that happens to be a substring.
+ * Longest-match family lookup, so `claude-opus-4-8-thinking-medium` does not
+ * resolve through a shorter family that happens to be a substring.
  */
 export function benchmarkFamily(modelId) {
   const id = String(modelId).toLowerCase();
@@ -52,102 +62,145 @@ export function benchmarkScore(modelId) {
 }
 
 /**
- * Candidate models per provider, in the order each CLI reports them. Ranking
- * happens in modelsForProvider(); this list only decides what is on offer.
+ * Candidate models per provider, in each CLI's own order. Ranking happens in
+ * modelsForProvider(); this list only decides what is on offer.
  */
 const CANDIDATES = {
-  // Cursor routes every family in the snapshot, so its five are the snapshot's
-  // top five, pinned to the effort tail the best score came from.
+  // Cursor routes every family in the snapshot. bb's primary variants pin
+  // medium effort, so these are the snapshot's top five at medium thinking.
+  // Opus 5 and Grok 4.6 are newer than the snapshot: they are offered as
+  // unscored candidates rather than ranked on a score they do not have.
   cursor: [
-    { id: "claude-fable-5-max", label: "Claude Fable 5 (max)" },
-    { id: "gpt-5.6-sol-max", label: "GPT-5.6 Sol (max)" },
-    { id: "gpt-5.6-terra-max", label: "GPT-5.6 Terra (max)" },
-    { id: "claude-opus-4-8-max", label: "Claude Opus 4.8 (max)" },
-    { id: "claude-sonnet-5-max", label: "Claude Sonnet 5 (max)" },
+    { id: "claude-fable-5-thinking-medium", label: "Claude Fable 5 (thinking)" },
+    { id: "gpt-5.6-sol-medium", label: "GPT-5.6 Sol" },
+    { id: "gpt-5.6-terra-medium", label: "GPT-5.6 Terra" },
+    { id: "claude-opus-4-8-thinking-medium", label: "Claude Opus 4.8 (thinking)" },
+    { id: "claude-sonnet-5-thinking-medium", label: "Claude Sonnet 5 (thinking)" },
+    { id: "claude-opus-5-thinking-medium", label: "Claude Opus 5 (thinking)" },
+    { id: "cursor-grok-4.6-medium", label: "Cursor Grok 4.6" },
   ],
-  // Anthropic-only. The snapshot scores three Claude families; Opus 5 and
-  // Opus 4.7 fill out the five from Claude Code's own catalog, unscored.
+  // bb's curated Claude Code catalog, exactly five rows. Opus 5 is bb's default
+  // but is not in the snapshot, so it cannot be ranked above Opus 4.8 here.
   claude: [
     { id: "claude-fable-5", label: "Fable 5" },
+    { id: "claude-opus-5[1m]", label: "Opus 5 (1M)" },
     { id: "claude-opus-4-8[1m]", label: "Opus 4.8 (1M)" },
     { id: "claude-sonnet-5", label: "Sonnet 5" },
-    { id: "claude-opus-5[1m]", label: "Opus 5 (1M)" },
     { id: "claude-opus-4-7[1m]", label: "Opus 4.7 (1M)" },
   ],
-  // OpenAI-only. Four scored families plus GPT-5.2, the next model Codex lists.
+  // Only four OpenAI families are scored. A fifth is added from the live
+  // `model/list` when one is available — never invented.
   codex: [
     { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
     { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
     { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
     { id: "gpt-5.5", label: "GPT-5.5" },
-    { id: "gpt-5.2", label: "GPT-5.2" },
   ],
 };
 
 export const MAX_RECOMMENDATIONS = 5;
 
 /**
- * The provider's recommendations, most intelligent first. Scored models sort
- * by CursorBench score descending; unscored ones keep their catalog order and
- * always sort after every scored model.
- *
- * @param {"cursor"|"claude"|"codex"} providerKey
- * @returns {Array<{id: string, label: string, score: number|null, family: string|null, reasoning: string|null, detail: string}>}
+ * The score ranks the *family*, not this exact id. The snapshot scores
+ * family x effort pairs and FAMILY_BEST keeps each family's best, so saying
+ * "@ max" next to an id that pins medium would misread as this variant's own
+ * score.
  */
-export function modelsForProvider(providerKey) {
-  const candidates = CANDIDATES[providerKey] || [];
-  return candidates
-    .map((candidate, order) => {
-      const family = benchmarkFamily(candidate.id);
-      const best = family === null ? null : FAMILY_BEST.get(family);
-      return {
-        id: candidate.id,
-        label: candidate.label,
-        family,
-        score: best === null ? null : best.score,
-        reasoning: best === null ? null : best.reasoning,
-        order,
-      };
-    })
-    .sort((a, b) => {
-      if (a.score === null && b.score === null) return a.order - b.order;
-      if (a.score === null) return 1;
-      if (b.score === null) return -1;
-      return b.score - a.score || a.order - b.order;
-    })
-    .slice(0, MAX_RECOMMENDATIONS)
-    .map(({ order, ...model }) => ({ ...model, detail: modelDetail(model) }));
-}
-
-function modelDetail(model) {
+function describe(model) {
   if (model.score === null) return "not in the CursorBench 3.2 snapshot";
-  return `CursorBench ${model.score} — ${model.family} @ ${model.reasoning}`;
+  return `CursorBench ${model.score} — best for ${model.family}`;
 }
 
-/** The top-intelligence model for a provider — the picker's default highlight. */
-export function defaultModelFor(providerKey) {
-  return modelsForProvider(providerKey)[0] ?? null;
-}
-
-/**
- * Resolve a `--model` value. A catalog id (case-insensitive) comes back with
- * its label and score; anything else passes through untouched so a user can
- * name a model this catalog does not list yet.
- */
-export function resolveModel(providerKey, modelId) {
-  const wanted = String(modelId).trim();
-  if (wanted === "") return null;
-  const known = modelsForProvider(providerKey).find((model) => model.id.toLowerCase() === wanted.toLowerCase());
-  if (known) return known;
-  const family = benchmarkFamily(wanted);
+function annotate(candidate, order) {
+  const family = benchmarkFamily(candidate.id);
   const best = family === null ? null : FAMILY_BEST.get(family);
-  return {
-    id: wanted,
-    label: wanted,
+  const model = {
+    id: candidate.id,
+    label: candidate.label,
     family,
     score: best === null ? null : best.score,
     reasoning: best === null ? null : best.reasoning,
-    detail: best === null ? "not in the CursorBench 3.2 snapshot" : `CursorBench ${best.score} — ${family} @ ${best.reasoning}`,
-    passthrough: true,
+    order,
   };
+  return { ...model, detail: describe(model) };
+}
+
+function byIntelligence(a, b) {
+  if (a.score === null && b.score === null) return a.order - b.order;
+  if (a.score === null) return 1;
+  if (b.score === null) return -1;
+  return b.score - a.score || a.order - b.order;
+}
+
+/**
+ * The provider's recommendations, most intelligent first.
+ *
+ * `live` is what the CLI itself reports, when makefaster could ask. Given one,
+ * the catalog is reconciled against it rather than trusted blindly: ids the CLI
+ * does not list are dropped (an account without Fable access should not be
+ * offered Fable), and for a provider with fewer than five scored families the
+ * remaining slots are filled from the live list. Without one, the static
+ * catalog stands.
+ *
+ * @param {"cursor"|"claude"|"codex"} providerKey
+ * @param {{live?: Array<{id: string, displayName?: string}>|null}} [options]
+ * @returns {Array<{id: string, label: string, score: number|null, family: string|null, reasoning: string|null, detail: string}>}
+ */
+export function modelsForProvider(providerKey, { live = null } = {}) {
+  const candidates = CANDIDATES[providerKey] || [];
+  if (candidates.length === 0) return [];
+
+  const liveIds = Array.isArray(live) && live.length > 0 ? new Map(live.map((entry) => [entry.id.toLowerCase(), entry])) : null;
+
+  let offered = candidates.map(annotate);
+  if (liveIds) {
+    offered = offered.filter((model) => liveIds.has(model.id.toLowerCase()));
+    // Fill from the live list only when the curated candidates cannot fill five,
+    // preferring scored families so a fill is still an intelligence ranking.
+    if (offered.length < MAX_RECOMMENDATIONS) {
+      const known = new Set(offered.map((model) => model.id.toLowerCase()));
+      const extras = [...liveIds.values()]
+        .filter((entry) => !known.has(entry.id.toLowerCase()))
+        .map((entry, index) => annotate({ id: entry.id, label: entry.displayName || entry.id }, candidates.length + index))
+        .sort(byIntelligence);
+      offered = [...offered, ...extras.slice(0, MAX_RECOMMENDATIONS - offered.length)];
+    }
+  }
+
+  return offered
+    .sort(byIntelligence)
+    .slice(0, MAX_RECOMMENDATIONS)
+    .map(({ order, ...model }) => model);
+}
+
+/** The top-intelligence model for a provider — the picker's default highlight. */
+export function defaultModelFor(providerKey, options) {
+  return modelsForProvider(providerKey, options)[0] ?? null;
+}
+
+/**
+ * Resolve a `--model` value. A catalog id (case-insensitive) comes back with its
+ * label and score; anything else passes through untouched, so a model released
+ * after this snapshot still works.
+ */
+export function resolveModel(providerKey, modelId, options) {
+  const wanted = String(modelId).trim();
+  if (wanted === "") return null;
+  const known = modelsForProvider(providerKey, options).find((model) => model.id.toLowerCase() === wanted.toLowerCase());
+  if (known) return known;
+  const { order, ...model } = annotate({ id: wanted, label: wanted }, 0);
+  return { ...model, passthrough: true };
+}
+
+/** Parse `cursor-agent --list-models` output: one `id - Display Name` per line. */
+export function parseCursorModelList(output) {
+  const models = [];
+  for (const line of String(output).split(/\r?\n/)) {
+    const match = /^\s*([A-Za-z0-9][\w.\-[\]]*)\s+-\s+(.+?)\s*$/.exec(line);
+    if (!match) continue;
+    const [, id, displayName] = match;
+    if (id === "auto") continue; // a router, not a model to rank
+    models.push({ id, displayName });
+  }
+  return models;
 }

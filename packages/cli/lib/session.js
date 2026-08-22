@@ -3,13 +3,13 @@
  * the agent, the kickoff/continue prompts, and the hidden agent spawn.
  */
 
-import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from "node:fs";
-import { createInterface } from "node:readline";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildAgentInvocation, buildAuthProbe, interpretAuthProbe } from "./invoke.js";
-import { classifyEvent, createProgressReporter } from "./progress.js";
+import { runAcpSession } from "./agents/acp.js";
+import { runClaudeSession } from "./agents/claudeCode.js";
+import { runCodexSession } from "./agents/codexAppServer.js";
+import { createProgressReporter } from "./progress.js";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const SKILL_SOURCE = join(PACKAGE_ROOT, "packages", "skill", "SKILL.md");
@@ -116,118 +116,40 @@ export function continuePrompt() {
   ].join(" ");
 }
 
-const AUTH_PROBE_TIMEOUT_MS = 10_000;
-const STDERR_TAIL_MAX_CHARS = 4_000;
-
-/**
- * Ask the installed CLI whether it still holds credentials, without ever
- * creating any. Read-only, piped, TTY-free, and time-bounded — an install that
- * cannot answer is reported as "unknown" so the loop still runs.
- *
- * @returns {{state: "signed-in"|"signed-out"|"unknown", detail: string|null}}
- */
-export function checkSignedIn({ provider, env = process.env }) {
-  if (env.MAKEFASTER_SKIP_AUTH_CHECK) return { state: "unknown", detail: "skipped via MAKEFASTER_SKIP_AUTH_CHECK" };
-  const probe = buildAuthProbe({ provider, env });
-  if (!probe) return { state: "unknown", detail: null };
-  const result = spawnSync(probe.command, probe.args, { ...probe.options, timeout: AUTH_PROBE_TIMEOUT_MS });
-  return interpretAuthProbe({
-    status: result.status,
-    stdout: result.stdout || "",
-    stderr: result.stderr || "",
-    error: result.error || null,
-    timedOut: result.signal === "SIGTERM" && result.status === null,
-    signedOutExitCodes: probe.signedOutExitCodes,
-  });
-}
-
 /**
  * Run one round of the loop in the chosen agent CLI, hidden.
  *
- * The child gets piped stdio and no stdin, so its native interface never draws
- * and it never decides a human is available to answer a login, trust, or
- * permission prompt. Its structured event stream is collapsed into a single
- * progress line; `.makefaster/results.json` is what we actually read afterward.
+ * Each provider is a non-TTY protocol child (see lib/invoke.js): ACP for Cursor,
+ * the Agent SDK for Claude Code, `codex app-server` for Codex. None of them
+ * inherits this terminal and none is the product's interactive CLI, so nothing
+ * the child does can draw over makefaster or ask the user a question — which is
+ * also why each agent module answers the child's permission and approval
+ * requests itself.
  *
- * `signal` lets the caller stop the round — the user pressing q in the
- * dashboard — which terminates the child rather than orphaning it.
+ * `signal` lets the caller stop the round — the user pressing q in the dashboard
+ * — which terminates the child rather than orphaning it.
  *
- * @returns {Promise<{exitCode: number, stderrTail: string, eventCount: number, lastLabel: string|null, aborted: boolean}>}
+ * `authRequired` means the install is signed out. makefaster never fixes that
+ * itself: no login, no browser, no injected API key.
+ *
+ * @returns {Promise<{exitCode: number, stderrTail: string, eventCount: number, lastLabel: string|null, aborted: boolean, authRequired: boolean, detail: string|null}>}
  */
-export function runAgent({ provider, prompt, cwd, model = null, env = process.env, isRoot, reporter, signal }) {
-  const rootProcess = isRoot ?? (typeof process.getuid === "function" ? process.getuid() === 0 : false);
-  const invocation = buildAgentInvocation({ provider, prompt, cwd, model: model?.id ?? model ?? null, env, isRoot: rootProcess });
+export async function runAgent({ provider, prompt, cwd, model = null, env = process.env, reporter, signal }) {
   const progress = reporter ?? createProgressReporter();
+  const runners = {
+    cursor: runAcpSession,
+    claude: runClaudeSession,
+    codex: runCodexSession,
+  };
+  const runner = runners[provider.key];
+  if (!runner) throw new Error(`no protocol runner is defined for provider "${provider.key}"`);
 
-  return new Promise((resolvePromise, rejectPromise) => {
-    let child;
-    try {
-      child = spawn(invocation.command, invocation.args, { ...invocation.options, ...(signal ? { signal } : {}) });
-    } catch (err) {
-      rejectPromise(launchError(provider, err));
-      return;
-    }
-
-    let stderrTail = "";
-    let settled = false;
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      progress.done();
-      resolvePromise(result);
-    };
-
-    if (child.stdout) {
-      const lines = createInterface({ input: child.stdout, terminal: false });
-      lines.on("line", (line) => {
-        const trimmed = line.trim();
-        if (trimmed === "") return;
-        let event = null;
-        try {
-          event = JSON.parse(trimmed);
-        } catch {
-          return; // non-JSON chatter on stdout is not ours to render
-        }
-        progress.update(classifyEvent(invocation.streamFormat, event));
-      });
-    }
-
-    if (child.stderr) {
-      child.stderr.setEncoding("utf8");
-      child.stderr.on("data", (chunk) => {
-        stderrTail = `${stderrTail}${chunk}`.slice(-STDERR_TAIL_MAX_CHARS);
-      });
-    }
-
-    child.on("error", (err) => {
-      if (settled) return;
-      // An abort kills the child on purpose; that is a stop, not a failure.
-      if (err.name === "AbortError" || signal?.aborted) {
-        settled = true;
-        progress.done();
-        resolvePromise({ exitCode: 0, stderrTail: stderrTail.trim(), eventCount: progress.eventCount, lastLabel: progress.lastLabel, aborted: true });
-        return;
-      }
-      settled = true;
-      progress.done();
-      rejectPromise(launchError(provider, err));
-    });
-
-    // `close` rather than `exit`: the event stream must be fully drained before
-    // we read results.json, or the last iteration's write can still be in
-    // flight (bb's codex bridge finalizes on close for the same reason).
-    child.on("close", (code, closeSignal) => {
-      finish({
-        exitCode: signal?.aborted ? 0 : code ?? (closeSignal ? 1 : 0),
-        stderrTail: stderrTail.trim(),
-        eventCount: progress.eventCount,
-        lastLabel: progress.lastLabel,
-        aborted: Boolean(signal?.aborted),
-      });
-    });
-  });
-}
-
-function launchError(provider, err) {
-  return new Error(`failed to launch ${provider.displayName} (${provider.executablePath}): ${err.message}`);
+  const result = await runner({ provider, prompt, cwd, model, env, reporter: progress, signal });
+  return {
+    ...result,
+    eventCount: progress.eventCount,
+    lastLabel: progress.lastLabel,
+    authRequired: Boolean(result.authRequired),
+    detail: result.detail ?? null,
+  };
 }

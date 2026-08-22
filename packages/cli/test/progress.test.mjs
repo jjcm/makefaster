@@ -115,3 +115,47 @@ test("null entries leave the current line alone but still count the event", () =
   assert.equal(reporter.eventCount, 3);
   assert.deepEqual(chunks, ["  thinking\n", "  a bare string still works\n"]);
 });
+
+test("ACP session/update payloads become tagged loop steps", () => {
+  const acp = (update) => classifyEvent("acp", update);
+  assert.deepEqual(acp({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "hmm" } }), { tag: "HYPOTHESIS", text: "thinking" });
+  assert.deepEqual(acp({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "kept it" } }), { tag: "OBSERVE", text: "kept it" });
+  assert.deepEqual(acp({ sessionUpdate: "tool_call", kind: "edit", title: "Edit index.html" }), { tag: "EXECUTE", text: "Edit index.html" });
+  assert.deepEqual(acp({ sessionUpdate: "tool_call", kind: "read", locations: [{ path: "/repo/css/app.css" }] }), { tag: "OBSERVE", text: "reading app.css" });
+  // An untitled execute call is labelled from its command, and a measuring
+  // command is the TEST step.
+  assert.deepEqual(acp({ sessionUpdate: "tool_call", kind: "execute", rawInput: { command: "npx lighthouse http://x" } }), { tag: "TEST", text: "running npx lighthouse http://x" });
+  assert.deepEqual(acp({ sessionUpdate: "tool_call", kind: "execute", rawInput: { command: "git status" } }), { tag: "EXECUTE", text: "running git status" });
+  assert.deepEqual(acp({ sessionUpdate: "plan", entries: [{ content: "convert hero to AVIF", status: "in_progress" }] }), { tag: "PLAN", text: "convert hero to AVIF" });
+
+  // Noise that is not loop progress stays off the log.
+  assert.equal(acp({ sessionUpdate: "usage_update", used: 1, size: 2 }), null);
+  assert.equal(acp({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "our own prompt" } }), null);
+  assert.equal(acp({ sessionUpdate: "some_future_update" }), null);
+});
+
+test("codex app-server notifications become tagged loop steps", () => {
+  const codex = (method, params) => classifyEvent("codex-app-server", { method, params });
+  assert.deepEqual(codex("thread/started", { thread: { id: "t" } }), { tag: "OBSERVE", text: "session started" });
+  assert.deepEqual(codex("turn/started", {}), { tag: "OBSERVE", text: "turn started" });
+  assert.deepEqual(
+    codex("item/completed", { item: { type: "commandExecution", command: "npm run build" } }),
+    { tag: "EXECUTE", text: "running npm run build" },
+  );
+  assert.deepEqual(
+    codex("item/completed", { item: { type: "commandExecution", command: "npx lighthouse http://x" } }),
+    { tag: "TEST", text: "running npx lighthouse http://x" },
+  );
+  assert.deepEqual(
+    codex("item/completed", { item: { type: "fileChange", changes: [{ path: "/repo/index.html" }] } }),
+    { tag: "EXECUTE", text: "editing index.html" },
+  );
+  assert.deepEqual(codex("item/completed", { item: { type: "reasoning" } }), { tag: "HYPOTHESIS", text: "thinking" });
+  assert.deepEqual(codex("turn/completed", {}), { tag: "RESULT", text: "turn completed" });
+  assert.deepEqual(codex("turn/failed", { error: { message: "the model gave up" } }), { tag: "RESULT", text: "the model gave up" });
+
+  // Token-level deltas would repaint on every character.
+  assert.equal(codex("item/agentMessage/delta", { delta: "x" }), null);
+  assert.equal(codex("thread/tokenUsage/updated", {}), null);
+  assert.equal(codex("some/future/notification", {}), null);
+});

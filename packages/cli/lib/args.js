@@ -31,7 +31,6 @@ Environment:
   CURSOR_AGENT_EXECUTABLE, CLAUDE_CODE_EXECUTABLE (or BB_CLAUDE_CODE_EXECUTABLE),
   CODEX_EXECUTABLE               Explicit paths to agent CLI binaries
   MAKEFASTER_API_BASE            Leaderboard API base
-  MAKEFASTER_SKIP_AUTH_CHECK     Skip the read-only "still signed in?" probe
   MAKEFASTER_NO_TUI              Skip the full-screen dashboard
   NO_COLOR                       Disable colors
 `;
