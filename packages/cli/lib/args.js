@@ -22,6 +22,8 @@ Options:
                                 (default: $MAKEFASTER_API_BASE or https://makefaster.dev)
   --improvements <path|url>     Override the improvement-checklist source
   --max-misses <n>              Stop after n consecutive missed iterations (default 5)
+  --no-tui                      Skip the full-screen dashboard and print plain
+                                progress lines (automatic when not a TTY)
   -h, --help                    Show this help
   -v, --version                 Print the version
 
@@ -30,6 +32,7 @@ Environment:
   CODEX_EXECUTABLE               Explicit paths to agent CLI binaries
   MAKEFASTER_API_BASE            Leaderboard API base
   MAKEFASTER_SKIP_AUTH_CHECK     Skip the read-only "still signed in?" probe
+  MAKEFASTER_NO_TUI              Skip the full-screen dashboard
   NO_COLOR                       Disable colors
 `;
 
@@ -48,6 +51,7 @@ export function parseArgs(argv) {
     api: null,
     improvementsSource: null,
     maxMisses: 5,
+    tui: true,
     help: false,
     version: false,
   };
@@ -67,6 +71,7 @@ export function parseArgs(argv) {
     switch (arg) {
       case "-h": case "--help": args.help = true; break;
       case "-v": case "--version": args.version = true; break;
+      case "--no-tui": args.tui = false; break;
       case "--cli": {
         const value = takeValue(argv, i, "--cli");
         if (value !== null) {

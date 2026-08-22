@@ -9,7 +9,7 @@ import { createInterface } from "node:readline";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildAgentInvocation, buildAuthProbe, interpretAuthProbe } from "./invoke.js";
-import { createProgressReporter, describeEvent } from "./progress.js";
+import { classifyEvent, createProgressReporter } from "./progress.js";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const SKILL_SOURCE = join(PACKAGE_ROOT, "packages", "skill", "SKILL.md");
@@ -149,9 +149,12 @@ export function checkSignedIn({ provider, env = process.env }) {
  * permission prompt. Its structured event stream is collapsed into a single
  * progress line; `.makefaster/results.json` is what we actually read afterward.
  *
- * @returns {Promise<{exitCode: number, stderrTail: string, eventCount: number, lastLabel: string|null}>}
+ * `signal` lets the caller stop the round — the user pressing q in the
+ * dashboard — which terminates the child rather than orphaning it.
+ *
+ * @returns {Promise<{exitCode: number, stderrTail: string, eventCount: number, lastLabel: string|null, aborted: boolean}>}
  */
-export function runAgent({ provider, prompt, cwd, model = null, env = process.env, isRoot, reporter }) {
+export function runAgent({ provider, prompt, cwd, model = null, env = process.env, isRoot, reporter, signal }) {
   const rootProcess = isRoot ?? (typeof process.getuid === "function" ? process.getuid() === 0 : false);
   const invocation = buildAgentInvocation({ provider, prompt, cwd, model: model?.id ?? model ?? null, env, isRoot: rootProcess });
   const progress = reporter ?? createProgressReporter();
@@ -159,7 +162,7 @@ export function runAgent({ provider, prompt, cwd, model = null, env = process.en
   return new Promise((resolvePromise, rejectPromise) => {
     let child;
     try {
-      child = spawn(invocation.command, invocation.args, invocation.options);
+      child = spawn(invocation.command, invocation.args, { ...invocation.options, ...(signal ? { signal } : {}) });
     } catch (err) {
       rejectPromise(launchError(provider, err));
       return;
@@ -185,8 +188,7 @@ export function runAgent({ provider, prompt, cwd, model = null, env = process.en
         } catch {
           return; // non-JSON chatter on stdout is not ours to render
         }
-        const label = describeEvent(invocation.streamFormat, event);
-        progress.update(label);
+        progress.update(classifyEvent(invocation.streamFormat, event));
       });
     }
 
@@ -199,6 +201,13 @@ export function runAgent({ provider, prompt, cwd, model = null, env = process.en
 
     child.on("error", (err) => {
       if (settled) return;
+      // An abort kills the child on purpose; that is a stop, not a failure.
+      if (err.name === "AbortError" || signal?.aborted) {
+        settled = true;
+        progress.done();
+        resolvePromise({ exitCode: 0, stderrTail: stderrTail.trim(), eventCount: progress.eventCount, lastLabel: progress.lastLabel, aborted: true });
+        return;
+      }
       settled = true;
       progress.done();
       rejectPromise(launchError(provider, err));
@@ -207,12 +216,13 @@ export function runAgent({ provider, prompt, cwd, model = null, env = process.en
     // `close` rather than `exit`: the event stream must be fully drained before
     // we read results.json, or the last iteration's write can still be in
     // flight (bb's codex bridge finalizes on close for the same reason).
-    child.on("close", (code, signal) => {
+    child.on("close", (code, closeSignal) => {
       finish({
-        exitCode: code ?? (signal ? 1 : 0),
+        exitCode: signal?.aborted ? 0 : code ?? (closeSignal ? 1 : 0),
         stderrTail: stderrTail.trim(),
         eventCount: progress.eventCount,
         lastLabel: progress.lastLabel,
+        aborted: Boolean(signal?.aborted),
       });
     });
   });

@@ -21,23 +21,32 @@ function basename(path) {
   return parts[parts.length - 1] || String(path);
 }
 
-/** Verb for a tool name, so "Edit"/"apply_patch" both read as "editing". */
-function toolLabel(name, input) {
+/**
+ * A command that measures rather than changes is the loop's TEST step; the
+ * dashboard tags it that way.
+ */
+const MEASURING = /lighthouse|webpagetest|\bpsi\b|pagespeed|benchmark|\bbench\b|profil|measure|\bperf\b|playwright|puppeteer|vitest|jest|npm (?:run )?test/i;
+
+/** Verb plus loop step for a tool name, so "Edit"/"apply_patch" both read alike. */
+function toolEntry(name, input) {
   const tool = String(name || "").toLowerCase();
   const target = input && typeof input === "object"
     ? input.file_path || input.path || input.filePath || input.notebook_path || null
     : null;
   const where = target ? ` ${basename(target)}` : "";
-  if (/^(edit|multiedit|write|notebookedit|apply_?patch|str_?replace|create_?file)/.test(tool)) return `editing${where}`;
-  if (/^(read|view|open|notebookread)/.test(tool)) return `reading${where}`;
-  if (/(bash|shell|terminal|exec|run_?command|local_?shell)/.test(tool)) {
-    const command = input && typeof input === "object" ? input.command : null;
-    return `running ${trim(Array.isArray(command) ? command.join(" ") : command || "a command")}`;
+  if (/^(edit|multiedit|write|notebookedit|apply_?patch|str_?replace|create_?file)/.test(tool)) {
+    return { tag: "EXECUTE", text: `editing${where}` };
   }
-  if (/(grep|glob|search|codebase|find)/.test(tool)) return "searching the repo";
-  if (/(web|fetch|browser|http)/.test(tool)) return "fetching from the web";
-  if (/(todo|task|plan)/.test(tool)) return "planning";
-  return `${name || "tool"}${where}`;
+  if (/^(read|view|open|notebookread)/.test(tool)) return { tag: "OBSERVE", text: `reading${where}` };
+  if (/(bash|shell|terminal|exec|run_?command|local_?shell)/.test(tool)) {
+    const raw = input && typeof input === "object" ? input.command : null;
+    const command = Array.isArray(raw) ? raw.join(" ") : raw || "a command";
+    return { tag: MEASURING.test(command) ? "TEST" : "EXECUTE", text: `running ${trim(command)}` };
+  }
+  if (/(grep|glob|search|codebase|find)/.test(tool)) return { tag: "OBSERVE", text: "searching the repo" };
+  if (/(web|fetch|browser|http)/.test(tool)) return { tag: "OBSERVE", text: "fetching from the web" };
+  if (/(todo|task|plan)/.test(tool)) return { tag: "PLAN", text: "planning" };
+  return { tag: "EXECUTE", text: `${name || "tool"}${where}` };
 }
 
 function fromContentBlocks(blocks) {
@@ -45,45 +54,50 @@ function fromContentBlocks(blocks) {
   for (let i = blocks.length - 1; i >= 0; i--) {
     const block = blocks[i];
     if (!block || typeof block !== "object") continue;
-    if (block.type === "tool_use") return toolLabel(block.name, block.input);
-    if (block.type === "thinking") return "thinking";
-    if (block.type === "text" && typeof block.text === "string" && block.text.trim()) return trim(block.text);
+    if (block.type === "tool_use") return toolEntry(block.name, block.input);
+    if (block.type === "thinking") return { tag: "HYPOTHESIS", text: "thinking" };
+    if (block.type === "text" && typeof block.text === "string" && block.text.trim()) {
+      return { tag: "OBSERVE", text: trim(block.text) };
+    }
   }
   return null;
 }
 
 /**
- * Collapse one parsed stream event into a short status label.
+ * Collapse one parsed stream event into a loop step and a short label.
+ *
+ * The tags are the makefaster loop's own vocabulary — OBSERVE, HYPOTHESIS,
+ * PLAN, EXECUTE, TEST, RESULT, COMPARE — which is what the dashboard's log
+ * panel shows.
  *
  * Deliberately forgiving: any shape it does not recognise returns null and the
- * previous label stays up, because a provider adding an event type must not
- * turn into noise on the user's terminal.
+ * previous line stays up, because a provider adding an event type must not turn
+ * into noise on the user's terminal.
  *
  * @param {string} streamFormat from buildAgentInvocation()
  * @param {unknown} event a parsed JSON line
- * @returns {string|null}
+ * @returns {{tag: string, text: string}|null}
  */
-export function describeEvent(streamFormat, event) {
+export function classifyEvent(streamFormat, event) {
   if (!event || typeof event !== "object") return null;
 
-  if (streamFormat === "codex-jsonl") return describeCodexEvent(event);
+  if (streamFormat === "codex-jsonl") return classifyCodexEvent(event);
 
   // Claude Code and Cursor print mode share the stream-json envelope.
   const type = event.type;
-  if (type === "system") return event.subtype === "init" ? "session started" : null;
-  if (type === "assistant" || type === "user") {
-    const message = event.message;
-    return fromContentBlocks(message?.content) ?? null;
-  }
+  if (type === "system") return event.subtype === "init" ? { tag: "OBSERVE", text: "session started" } : null;
+  if (type === "assistant" || type === "user") return fromContentBlocks(event.message?.content) ?? null;
   if (type === "result") {
     const turns = typeof event.num_turns === "number" ? ` after ${event.num_turns} turns` : "";
-    return event.is_error || event.subtype === "error" ? `the agent reported an error${turns}` : `agent finished${turns}`;
+    return event.is_error || event.subtype === "error"
+      ? { tag: "RESULT", text: `the agent reported an error${turns}` }
+      : { tag: "RESULT", text: `agent finished${turns}` };
   }
-  if (type === "tool_call" || type === "tool_use") return toolLabel(event.name || event.tool, event.input || event.args);
+  if (type === "tool_call" || type === "tool_use") return toolEntry(event.name || event.tool, event.input || event.args);
   return null;
 }
 
-function describeCodexEvent(event) {
+function classifyCodexEvent(event) {
   // Codex has shipped two JSONL envelopes: a flat `{type, ...}` item stream and
   // an older `{msg: {type, ...}}` wrapper. Handle both.
   const inner = event.msg && typeof event.msg === "object" ? event.msg : event;
@@ -92,28 +106,37 @@ function describeCodexEvent(event) {
 
   if (item) {
     const kind = String(item.item_type || item.type || "");
-    if (/command/.test(kind)) return `running ${trim(item.command || "a command")}`;
+    if (/command/.test(kind)) {
+      const command = trim(item.command || "a command");
+      return { tag: MEASURING.test(command) ? "TEST" : "EXECUTE", text: `running ${command}` };
+    }
     if (/patch|file|edit/.test(kind)) {
       const changes = item.changes && typeof item.changes === "object" ? Object.keys(item.changes) : [];
-      return changes.length > 0 ? `editing ${basename(changes[0])}` : "editing files";
+      return { tag: "EXECUTE", text: changes.length > 0 ? `editing ${basename(changes[0])}` : "editing files" };
     }
-    if (/reasoning/.test(kind)) return "thinking";
-    if (/agent_message|assistant/.test(kind)) return trim(item.text || "writing a reply");
-    if (/web_search/.test(kind)) return "searching the web";
-    if (kind) return trim(kind.replace(/_/g, " "));
+    if (/reasoning/.test(kind)) return { tag: "HYPOTHESIS", text: "thinking" };
+    if (/agent_message|assistant/.test(kind)) return { tag: "OBSERVE", text: trim(item.text || "writing a reply") };
+    if (/web_search/.test(kind)) return { tag: "OBSERVE", text: "searching the web" };
+    if (kind) return { tag: "EXECUTE", text: trim(kind.replace(/_/g, " ")) };
   }
 
-  if (/^task_started|session_configured|thread\.started/.test(type)) return "session started";
+  if (/^task_started|session_configured|thread\.started/.test(type)) return { tag: "OBSERVE", text: "session started" };
   if (/^exec_command_begin/.test(type)) {
-    const command = inner.command;
-    return `running ${trim(Array.isArray(command) ? command.join(" ") : command || "a command")}`;
+    const raw = inner.command;
+    const command = trim(Array.isArray(raw) ? raw.join(" ") : raw || "a command");
+    return { tag: MEASURING.test(command) ? "TEST" : "EXECUTE", text: `running ${command}` };
   }
-  if (/^patch_apply_begin|apply_patch/.test(type)) return "editing files";
-  if (/^agent_reasoning/.test(type)) return "thinking";
-  if (/^agent_message/.test(type)) return trim(inner.message || "writing a reply");
-  if (/^(task_complete|turn\.completed|thread\.completed)/.test(type)) return "agent finished";
-  if (/error/.test(type)) return trim(inner.message || "the agent reported an error");
+  if (/^patch_apply_begin|apply_patch/.test(type)) return { tag: "EXECUTE", text: "editing files" };
+  if (/^agent_reasoning/.test(type)) return { tag: "HYPOTHESIS", text: "thinking" };
+  if (/^agent_message/.test(type)) return { tag: "OBSERVE", text: trim(inner.message || "writing a reply") };
+  if (/^(task_complete|turn\.completed|thread\.completed)/.test(type)) return { tag: "RESULT", text: "agent finished" };
+  if (/error/.test(type)) return { tag: "RESULT", text: trim(inner.message || "the agent reported an error") };
   return null;
+}
+
+/** The label alone, for the plain-text progress line on a non-TTY. */
+export function describeEvent(streamFormat, event) {
+  return classifyEvent(streamFormat, event)?.text ?? null;
 }
 
 /**
@@ -142,8 +165,10 @@ export function createProgressReporter({ write, isTty, prefix = "  " } = {}) {
     get lastLabel() {
       return last;
     },
-    update(label) {
+    /** @param {{tag: string, text: string}|string|null} entry */
+    update(entry) {
       count += 1;
+      const label = typeof entry === "string" ? entry : entry?.text ?? null;
       if (!label || label === last) return;
       last = label;
       if (tty) {

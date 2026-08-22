@@ -159,7 +159,11 @@ test("auth probes are read-only, piped, and never a login", () => {
 test("interpretAuthProbe only reports signed-out on a positive signal", () => {
   assert.equal(interpretAuthProbe({ status: 0 }).state, "signed-in");
   assert.equal(interpretAuthProbe({ status: 1, stdout: "Not logged in" }).state, "signed-out");
-  assert.equal(interpretAuthProbe({ status: 0, stdout: '{"loggedIn": false}' }).state, "signed-out");
+  const jsonProbe = interpretAuthProbe({ status: 0, stdout: '{"loggedIn": false}' });
+  assert.equal(jsonProbe.state, "signed-out");
+  // A raw JSON blob is not a sentence to show the user.
+  assert.equal(jsonProbe.detail, null);
+  assert.equal(interpretAuthProbe({ status: 1, stdout: "Not logged in" }).detail, "Not logged in");
   assert.equal(interpretAuthProbe({ status: 1, signedOutExitCodes: [1] }).state, "signed-out");
 
   // A CLI too old to know the probe says nothing about credentials.
@@ -205,7 +209,7 @@ test("runAgent spawns hidden and returns the child's exit code", { skip: process
     reporter: {
       eventCount: 0,
       lastLabel: null,
-      update: (label) => written.push(label),
+      update: (entry) => written.push(entry?.text ?? entry),
       done: () => written.push("[done]"),
     },
   });

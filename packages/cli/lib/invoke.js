@@ -181,7 +181,10 @@ export function interpretAuthProbe({ status, stdout = "", stderr = "", error = n
 
 function firstMeaningfulLine(output) {
   const line = output.split(/\r?\n/).map((l) => l.trim()).find((l) => l.length > 0);
-  return line ? line.slice(0, 160) : null;
+  if (!line) return null;
+  // A raw JSON status blob is the machine's answer, not a sentence for a human.
+  if (/^[[{]/.test(line)) return null;
+  return line.slice(0, 160);
 }
 
 /** The one line makefaster prints instead of ever starting a login flow. */

@@ -12,6 +12,11 @@ test("defaults", () => {
   assert.equal(args.help, false);
 });
 
+test("the dashboard is on unless --no-tui turns it off", () => {
+  assert.equal(parseArgs([]).args.tui, true);
+  assert.equal(parseArgs(["--no-tui"]).args.tui, false);
+});
+
 test("--model is taken verbatim, brackets and all", () => {
   assert.equal(parseArgs(["--model", "gpt-5.6-sol"]).args.model, "gpt-5.6-sol");
   assert.equal(parseArgs(["--model", "claude-opus-4-8[1m]"]).args.model, "claude-opus-4-8[1m]");
@@ -51,5 +56,6 @@ test("help and version flags", () => {
   assert.match(USAGE, /npx makefaster/);
   assert.match(USAGE, /--max-misses/);
   assert.match(USAGE, /--model <id>/);
+  assert.match(USAGE, /--no-tui/);
   assert.match(USAGE, /runs hidden/);
 });

@@ -17,8 +17,10 @@ import { detectProviders, missingCliGuidance } from "../lib/detect.js";
 import { runEndScreen } from "../lib/endscreen.js";
 import { importChecklist } from "../lib/improvements.js";
 import { signedOutGuidance } from "../lib/invoke.js";
+import { createLoopView } from "../lib/loopView.js";
 import { modelsForProvider, resolveModel } from "../lib/models.js";
 import { confirm, selectFrom } from "../lib/picker.js";
+import { createTui, tuiSupported } from "../lib/tui.js";
 import {
   checkSignedIn,
   continuePrompt,
@@ -116,6 +118,9 @@ async function pickModel(provider, modelFlag) {
   const models = modelsForProvider(provider.key);
   if (models.length === 0) return null;
   if (models.length === 1) return models[0];
+  if (!process.stdin.isTTY) {
+    fail(`${provider.displayName} offers ${models.length} models but stdin is not a TTY — pass --model <${models[0].id}>`, 2);
+  }
 
   const ranked = models.filter((model) => model.score !== null).length;
   console.log(`  ${bold(`Which model should ${provider.displayName} run?`)} ${dim(`(${ranked} of ${models.length} ranked by CursorBench 3.2)`)}`);
@@ -147,6 +152,33 @@ async function pickModel(provider, modelFlag) {
 function requireSignedIn(provider) {
   const { state, detail } = checkSignedIn({ provider });
   if (state === "signed-out") fail(signedOutGuidance(provider, detail), 3);
+}
+
+/**
+ * Run one round under makefaster's own full-screen dashboard. The agent CLI
+ * stays hidden behind piped stdio either way; this only decides who draws.
+ *
+ * The terminal is handed back before returning, so the end screen's questions
+ * happen on the normal screen — including when the user quits or the round
+ * throws.
+ */
+async function runRoundInDashboard({ provider, prompt, cwd, model, paths, state }) {
+  const controller = new AbortController();
+  const tui = createTui({ onQuit: () => controller.abort() });
+  const view = createLoopView({ tui, paths, state, provider, model });
+
+  tui.start();
+  view.append("OBSERVE", `round ${state.round}: driving ${provider.displayName} headlessly${model ? ` on ${model.id}` : ""}`);
+  view.render();
+  try {
+    const result = await runAgent({ provider, prompt, cwd, model, reporter: view.reporter, signal: controller.signal });
+    view.setStatus(result.aborted ? "STOPPED" : "DONE");
+    view.flush();
+    return result;
+  } finally {
+    view.stop();
+    tui.stop();
+  }
 }
 
 async function main() {
@@ -204,16 +236,24 @@ async function main() {
     siteUrl: args.url,
   });
 
+  const useTui = args.tui && tuiSupported();
   let prompt = kickoffPrompt();
   for (;;) {
-    console.log(`  ${cyan(ARROW)} running the loop in ${bold(provider.displayName)} ${dim(`(round ${state.round})`)} — hidden, no prompts; this can take a while.\n`);
-    const { exitCode, stderrTail } = await runAgent({ provider, prompt, cwd, model });
-    if (exitCode !== 0) {
+    console.log(`  ${cyan(ARROW)} running the loop in ${bold(provider.displayName)} ${dim(`(round ${state.round})`)} — hidden, no prompts; this can take a while.`);
+    if (useTui) console.log(dim("  makefaster takes the screen while it runs; press q to stop the round.\n"));
+    else console.log("");
+
+    const { exitCode, stderrTail, aborted } = useTui
+      ? await runRoundInDashboard({ provider, prompt, cwd, model, paths, state })
+      : await runAgent({ provider, prompt, cwd, model });
+
+    if (aborted) console.log(yellow(`  stopped ${provider.displayName} at your request.`));
+    else if (exitCode !== 0) {
       console.log(yellow(`\n  ${provider.displayName} exited with code ${exitCode}.`));
       if (stderrTail) console.log(dim(indent(stderrTail.split(/\r?\n/).slice(-8).join("\n"))));
     }
 
-    // 5. End screen: summary + the three questions.
+    // 5. End screen: summary + the three questions, back on the normal screen.
     const results = readResults(cwd);
     const { loopMore } = await runEndScreen({ results, state, paths });
     if (!loopMore) break;
