@@ -375,7 +375,8 @@ class SiteLeaderboardPage extends HTMLElement {
       this.els.showing.textContent = "Showing 0 sites";
     }
 
-    renderPagination(this.els.pagination, this.state.page, pageCount, function (p) {
+    // Nothing to page through: 0 renders an empty nav rather than a lone "1".
+    renderPagination(this.els.pagination, this.state.page, data.length ? pageCount : 0, function (p) {
       self.state.page = p;
       self.renderTable();
     });
