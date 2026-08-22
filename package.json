@@ -12,9 +12,8 @@
     "data/improvements.json"
   ],
   "scripts": {
-    "test": "node --test packages/cli/test/*.test.mjs server/test/*.test.mjs",
-    "serve": "node server/server.mjs",
-    "site": "python3 -m http.server 8000"
+    "test": "node --test packages/cli/test/*.test.mjs",
+    "serve": "./run.sh"
   },
   "engines": {
     "node": ">=18.17"
