@@ -143,11 +143,11 @@ milliseconds. Deltas are negative when the site got faster.
   "profilingTool": "lighthouse 12.x, median of 3 runs, headless Chrome",
   "noiseFloor": { "lcpMs": 40, "ttiMs": 60 },
   "baseline": {
-    "cold": { "lcpMs": 2400, "ttiMs": 3900, "fcpMs": 1400, "tbtMs": 310 },
+    "cold": { "lcpMs": 2400, "ttiMs": 3900, "fcpMs": 1400, "tbtMs": 310, "cls": 0.08, "score": 72 },
     "warm": { "lcpMs": 1100, "ttiMs": 1700, "fcpMs": 600, "tbtMs": 120 }
   },
   "final": {
-    "cold": { "lcpMs": 1750, "ttiMs": 3050, "fcpMs": 1150, "tbtMs": 190 },
+    "cold": { "lcpMs": 1750, "ttiMs": 3050, "fcpMs": 1150, "tbtMs": 190, "cls": 0.03, "score": 91 },
     "warm": { "lcpMs": 780, "ttiMs": 1240, "fcpMs": 420, "tbtMs": 70 }
   },
   "iterations": [
@@ -184,8 +184,10 @@ Field notes:
   `/favicon.ico`); it is shown next to the URL on the site leaderboard.
 - `baseline` / `final` — medians per mode. Include the modes you measured;
   `lcpMs` and `ttiMs` are required per included mode (they feed the site
-  leaderboard), `fcpMs` / `tbtMs` are welcome extras. `final` for a mode is
-  the last full measurement pass, re-run after the last kept change.
+  leaderboard), `fcpMs` / `tbtMs` / `cls` / `score` (0-100 performance score)
+  are welcome extras — the CLI's live dashboard shows a row per metric you
+  supply and omits the rest. `final` for a mode is the last full measurement
+  pass, re-run after the last kept change.
 - `iterations[].category` — the checklist category name this corresponds to,
   or `null` when it is genuinely novel (the server will embed the name +
   description and either fold it into the closest category or create a new

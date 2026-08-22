@@ -1,12 +1,15 @@
 /**
  * Session plumbing: the .makefaster/ working directory the CLI shares with
- * the agent, the kickoff/continue prompts, and the interactive agent spawn.
+ * the agent, the kickoff/continue prompts, and the hidden agent spawn.
  */
 
-import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runAcpSession } from "./agents/acp.js";
+import { runClaudeSession } from "./agents/claudeCode.js";
+import { runCodexSession } from "./agents/codexAppServer.js";
+import { createProgressReporter } from "./progress.js";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const SKILL_SOURCE = join(PACKAGE_ROOT, "packages", "skill", "SKILL.md");
@@ -43,7 +46,7 @@ function excludeFromGit(cwd) {
   }
 }
 
-export function prepareSession({ cwd, provider, checklist, checklistSource, apiBase, maxMisses, siteUrl }) {
+export function prepareSession({ cwd, provider, model, checklist, checklistSource, apiBase, maxMisses, siteUrl }) {
   const paths = sessionPaths(cwd);
   mkdirSync(paths.dir, { recursive: true });
   copyFileSync(SKILL_SOURCE, paths.skill);
@@ -52,6 +55,8 @@ export function prepareSession({ cwd, provider, checklist, checklistSource, apiB
   const state = {
     version: 1,
     provider: provider.key,
+    model: model?.id ?? null,
+    modelLabel: model?.label ?? null,
     startedAt: new Date().toISOString(),
     apiBase,
     siteUrl: siteUrl || null,
@@ -112,17 +117,39 @@ export function continuePrompt() {
 }
 
 /**
- * Hand the terminal to the chosen agent CLI. All three providers accept an
- * initial prompt as a positional argument and then run interactively, so the
- * user can watch and steer the loop.
+ * Run one round of the loop in the chosen agent CLI, hidden.
+ *
+ * Each provider is a non-TTY protocol child (see lib/invoke.js): ACP for Cursor,
+ * the Agent SDK for Claude Code, `codex app-server` for Codex. None of them
+ * inherits this terminal and none is the product's interactive CLI, so nothing
+ * the child does can draw over makefaster or ask the user a question — which is
+ * also why each agent module answers the child's permission and approval
+ * requests itself.
+ *
+ * `signal` lets the caller stop the round — the user pressing q in the dashboard
+ * — which terminates the child rather than orphaning it.
+ *
+ * `authRequired` means the install is signed out. makefaster never fixes that
+ * itself: no login, no browser, no injected API key.
+ *
+ * @returns {Promise<{exitCode: number, stderrTail: string, eventCount: number, lastLabel: string|null, aborted: boolean, authRequired: boolean, detail: string|null}>}
  */
-export function runAgent({ provider, prompt, cwd }) {
-  const result = spawnSync(provider.executablePath, [prompt], {
-    cwd,
-    stdio: "inherit",
-  });
-  if (result.error) {
-    throw new Error(`failed to launch ${provider.displayName} (${provider.executablePath}): ${result.error.message}`);
-  }
-  return { exitCode: result.status ?? 0 };
+export async function runAgent({ provider, prompt, cwd, model = null, env = process.env, reporter, signal }) {
+  const progress = reporter ?? createProgressReporter();
+  const runners = {
+    cursor: runAcpSession,
+    claude: runClaudeSession,
+    codex: runCodexSession,
+  };
+  const runner = runners[provider.key];
+  if (!runner) throw new Error(`no protocol runner is defined for provider "${provider.key}"`);
+
+  const result = await runner({ provider, prompt, cwd, model, env, reporter: progress, signal });
+  return {
+    ...result,
+    eventCount: progress.eventCount,
+    lastLabel: progress.lastLabel,
+    authRequired: Boolean(result.authRequired),
+    detail: result.detail ?? null,
+  };
 }

@@ -44,6 +44,7 @@ export const PROVIDERS = [
     ],
     homeHints: ({ home }) => [join(home, ".cursor")],
     install: "curl https://cursor.com/install -fsS | bash",
+    signIn: "cursor-agent login",
     validateAmbiguousName: (name, { resolvedPath, versionOutput }) => {
       if (name !== "agent") return true;
       return /cursor/i.test(resolvedPath) || /cursor/i.test(versionOutput || "");
@@ -62,6 +63,7 @@ export const PROVIDERS = [
     ],
     homeHints: ({ home }) => [join(home, ".claude")],
     install: "curl -fsSL https://claude.ai/install.sh | bash   (or: npm install -g @anthropic-ai/claude-code)",
+    signIn: "claude auth login",
   },
   {
     key: "codex",
@@ -77,6 +79,7 @@ export const PROVIDERS = [
     ],
     homeHints: ({ home, env }) => [env.CODEX_HOME || join(home, ".codex")],
     install: "npm install -g @openai/codex",
+    signIn: "codex login",
   },
 ];
 
@@ -161,6 +164,7 @@ export function detectProviders(options = {}) {
       key: provider.key,
       displayName: provider.displayName,
       install: provider.install,
+      signIn: provider.signIn,
       found: false,
       executablePath: null,
       source: null,

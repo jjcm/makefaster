@@ -37,19 +37,28 @@ What happens:
    or downloads a model; it drives your existing install. If none are found
    it prints the real installers and exits.
 2. **Asks you to pick** among the CLIs actually found — before anything runs.
-3. **Imports the improvement checklist** — up to the top 50 categories from the
+3. **Asks you to pick a model** — five per provider, ranked by intelligence
+   (see [Model picker](#model-picker)). `--model <id>` skips the picker.
+4. **Reuses the sign-in you already have.** makefaster never runs a `login`,
+   opens a browser, prints a device code, or injects an API key; a signed-out
+   install fails with the CLI's own auth error and makefaster reports it in one
+   line pointing at the native `login` command.
+5. **Imports the improvement checklist** — up to the top 50 categories from the
    live leaderboard, falling back to the technique catalog bundled at
    [`packages/cli/data/improvements.json`](packages/cli/data/improvements.json)
    while the public board is still filling up. Either way it is a guide of
    likely wins, not a script.
-4. **Hands your repo to the agent** with the loop skill
+6. **Runs the agent CLI hidden** with the loop skill
    ([`packages/skill/SKILL.md`](packages/skill/SKILL.md)): profile a
    user-felt metric (Lighthouse if available; cold + warm; median of ≥3 runs),
    then one hypothesis per iteration — measure, keep if it beats the noise
-   floor, revert otherwise.
-5. **Stops after 5 consecutive misses** (no serious improvement: ≥5% or
+   floor, revert otherwise. The other product's interface never draws and never
+   prompts you (see [The native CLI stays hidden](#the-native-cli-stays-hidden));
+   makefaster shows [its own dashboard](#the-dashboard) instead.
+7. **Stops after 5 consecutive misses** (no serious improvement: ≥5% or
    ≥20 ms on the north-star metric, and FCP-only wins that regress LCP don't
-   count), then shows the end screen with three questions:
+   count), then leaves the dashboard and shows the end screen with three
+   questions:
    - **Loop more?** — resets the miss counter and continues.
    - **Submit stats to the Site leaderboard?** — your URL and favicon are
      displayed publicly with the measured LCP/TTI improvements.
@@ -59,15 +68,142 @@ What happens:
 
 ```text
 Usage: npx makefaster [dir] [options]
-  --cli <cursor|claude|codex>   Skip the picker
+  --cli <cursor|claude|codex>   Skip the provider picker
+  --model <id>                  Skip the model picker
   --url <example.com>           Site URL for the leaderboard submission
   --api <base>                  Leaderboard API base (default https://makefaster.dev)
   --improvements <path|url>     Override the checklist source
   --max-misses <n>              Stop after n straight misses (default 5)
+  --no-tui                      Plain progress lines instead of the dashboard
 ```
 
 Session state lives in `.makefaster/` in the target repo (auto-excluded from
-git via `.git/info/exclude`).
+git via `.git/info/exclude`). The chosen provider and model are recorded in
+`.makefaster/state.json`.
+
+## The dashboard
+
+While the agent works, makefaster owns the screen: an alternate-screen TUI with
+no dependencies — raw ANSI, three panels, repainted from
+`.makefaster/results.json` and from the hidden agent's event stream.
+
+![The makefaster dashboard](docs/dashboard.png)
+
+- **AGENT THINKING** — a timestamped log of the loop's steps (`OBSERVE`,
+  `HYPOTHESIS`, `PLAN`, `EXECUTE`, `TEST`, `RESULT`, `COMPARE`). Tool calls come
+  from the agent's stream; `RESULT` and `COMPARE` come from `results.json`, so
+  they are measurements rather than narration.
+- **AUTORESEARCH / WEBSITE SPEED** — the loop counter, the current experiment,
+  and every metric the session measured (`lcpMs`, `tbtMs`, `fcpMs`, `ttiMs`,
+  plus `cls` and `score` when the agent records them) as candidate vs baseline.
+  Rows for metrics you did not measure are left out rather than shown empty.
+- **RUN TIMINGS** — one bar per run on the north-star metric, with a dashed
+  baseline, a star on the best run, and the rolling average. The schema stores
+  per-iteration deltas rather than absolutes, so the bars are the baseline
+  walked forward through the deltas — kept iterations move the running value,
+  reverted ones do not.
+
+`q` or Ctrl-C stops the round and restores the terminal; a resize re-renders.
+The dashboard needs a TTY on both stdin and stdout — when output is piped, or
+with `--no-tui` or `MAKEFASTER_NO_TUI=1`, makefaster prints a plain progress
+line instead.
+
+## The native CLI stays hidden
+
+makefaster drives your agent CLI the way [bb](https://github.com/get-bb/bb)'s
+provider bridges do: as a **non-TTY protocol child**, not as a terminal
+application and not as a print-mode wrapper where a protocol exists. stdio is
+always piped and never `stdio: "inherit"`; stdin is a pipe makefaster writes
+protocol frames into, never your terminal — attaching it is what otherwise makes
+these CLIs decide a human is present and start asking for login, workspace
+trust, and per-tool permission.
+
+| CLI | How makefaster drives it |
+|---|---|
+| Cursor Agent | `cursor-agent --model <id> acp` — Agent Client Protocol over stdio |
+| Claude Code | `@anthropic-ai/claude-agent-sdk` `query()`, which owns the CLI pipe itself; print mode is the zero-dependency fallback |
+| Codex | `codex app-server` — JSON-RPC; the model rides `thread/start` |
+
+`--model` is a *global* Cursor option, so it precedes the `acp` subcommand.
+Cursor has no permission flag at all — `--force`, `--yolo` and `--always-approve`
+belong to other agents — and neither does the app-server. So **makefaster answers
+the child's permission requests itself**: ACP `session/request_permission`,
+Claude's `canUseTool`, and Codex's three `requestApproval` methods. Without that
+a hidden child would block forever on a question with no UI to ask it in.
+
+Claude Code is the one provider where a protocol client is a dependency rather
+than a subprocess, so the Agent SDK is an optional peer: if it resolves,
+makefaster uses it with bb's options — `pathToClaudeCodeExecutable`,
+`settingSources: ["user","project","local"]` so `~/.claude` OAuth and settings
+load, `permissionMode: "bypassPermissions"` plus
+`allowDangerouslySkipPermissions`, and the prompt as an async iterable. If it
+does not resolve, the fallback is print mode over piped stdio with the same
+setting sources and permission mode, and the prompt written to stdin as a
+stream-json frame rather than placed on argv.
+
+Two details worth knowing: Claude Code refuses to skip permissions as root and
+exits before the session starts, so as root makefaster sends
+`--permission-mode acceptEdits` and leans on the tool-approval callback instead;
+and Codex's `--full-auto` was removed from the CLI, which is part of why the
+app-server — where the posture is `approvalPolicy: "never"` with a
+`workspaceWrite` sandbox — is the path rather than `codex exec`.
+
+### Credentials are reused, never supplied
+
+makefaster never runs a `login` subcommand, never opens a browser, and never
+prints a device code. It also **never injects an API key**: `ANTHROPIC_API_KEY`,
+`CURSOR_API_KEY` and `OPENAI_API_KEY` are not set by makefaster, because an
+injected key fights the OAuth credentials the CLI already stored and can itself
+cause prompts. The child inherits your environment untouched and finds
+`~/.claude`, `~/.cursor` and `CODEX_HOME`/`~/.codex` exactly as the native CLI
+does. A key *you* set stays yours; makefaster only refuses to add one.
+
+A signed-out install therefore fails with an auth-required error from the child
+(or from the model-list probe, which needs the same account). That is the
+expected signal: makefaster reports it in one line naming the native `login`
+command and stops.
+
+## Model picker
+
+After you pick a provider, makefaster offers up to five models ranked by
+intelligence. The ranking is the CursorBench 3.2 snapshot (captured 2026-07-16)
+that [`jjcm/bb-plugin-autorouter`](https://github.com/jjcm/bb-plugin-autorouter/blob/main/benchmarks.ts)
+carries as `CURSOR_BENCHMARKS`, reduced to the best score per model family.
+
+The three CLIs do not share an id namespace, so the catalog does not either:
+
+| | Cursor | Claude Code | Codex |
+|---|---|---|---|
+| 1 | `claude-fable-5-thinking-medium` — 70.5 | `claude-fable-5` — 70.5 | `gpt-5.6-sol` — 67.2 |
+| 2 | `gpt-5.6-sol-medium` — 67.2 | `claude-opus-4-8[1m]` — 62.3 | `gpt-5.6-terra` — 64.9 |
+| 3 | `gpt-5.6-terra-medium` — 64.9 | `claude-sonnet-5` — 61.5 | `gpt-5.6-luna` — 61.1 |
+| 4 | `claude-opus-4-8-thinking-medium` — 62.3 | `claude-opus-5[1m]` — unranked | `gpt-5.5` — 58.4 |
+| 5 | `claude-sonnet-5-thinking-medium` — 61.5 | `claude-opus-4-7[1m]` — unranked | *live list only* |
+
+Cursor ids are **variants**: family plus reasoning effort plus an optional
+`-fast` twin, and bb's primaries pin medium. Claude Code ids carry **no effort
+suffix** — reasoning is a separate field — and a bracketed context parameter such
+as `[1m]` is part of the id. Codex ids are plain families.
+
+The score ranks the model *family*, not the exact variant, because that is what
+the snapshot supports: it scores family-by-effort pairs and this keeps each
+family's best. The picker says so rather than printing an effort next to an id
+that pins a different one.
+
+Where makefaster can ask the CLI what the account can actually run, it does, and
+reconciles: `cursor-agent --list-models` for Cursor and `model/list` on the
+app-server for Codex. Ids the CLI does not list are dropped, so an account
+without Fable access is not offered Fable. Claude Code needs no probe — bb's
+curated catalog is already exactly the five rows its own catalog filters to.
+
+Only four OpenAI families are scored, so Codex shows four unless a live list
+supplies a fifth. Families the snapshot does not score — Opus 5 and Grok 4.6 are
+both newer than it — are offered but sort after every scored model and say they
+are absent from the snapshot, rather than being given an invented number. The
+catalog lives in [`packages/cli/lib/models.js`](packages/cli/lib/models.js).
+
+`--model` also accepts an id that is not in this table and passes it straight
+through, so a model released after this snapshot still works.
 
 ## Skills
 
@@ -237,9 +373,16 @@ server too so the boards stay live.
 ## Tests
 
 ```bash
-npm test                                    # CLI detection, args, payload builders
+npm test                                    # CLI: detection, args, payloads,
+                                            # protocol children, catalog, dashboard
 cd backend && go test ./...                 # server, embedder, categorization
 ```
+
+The CLI suite spawns real protocol children — a stub agent speaking ACP and one
+speaking the codex app-server dialect — and asserts on the frames they receive,
+so the argv, the handshake, and the permission answers are proven rather than
+described. It needs no network, no database, and no signed-in agent CLI.
+
 
 The MariaDB-backed server tests skip unless a throwaway schema is named, so
 `go test ./...` passes on a machine with no database. To run them:

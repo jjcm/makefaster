@@ -2,8 +2,10 @@
 /**
  * npx makefaster — run the autoresearch performance loop against the site in
  * the current directory, driving an agent CLI you already have installed
- * (Cursor Agent, Claude Code, or Codex). See packages/skill/SKILL.md for the
- * loop itself and README.md for the full flow.
+ * (Cursor Agent, Claude Code, or Codex). The agent CLI is driven as a hidden
+ * worker: see packages/cli/lib/invoke.js for why nothing inherits this
+ * terminal, packages/skill/SKILL.md for the loop itself, and README.md for the
+ * full flow.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -13,8 +15,13 @@ import { USAGE, parseArgs } from "../lib/args.js";
 import { resolveApiBase } from "../lib/apiClient.js";
 import { detectProviders, missingCliGuidance } from "../lib/detect.js";
 import { runEndScreen } from "../lib/endscreen.js";
+import { listModels } from "../lib/agents/modelList.js";
 import { importChecklist } from "../lib/improvements.js";
+import { signedOutGuidance } from "../lib/invoke.js";
+import { createLoopView } from "../lib/loopView.js";
+import { modelsForProvider, resolveModel } from "../lib/models.js";
 import { confirm, selectFrom } from "../lib/picker.js";
+import { createTui, tuiSupported } from "../lib/tui.js";
 import {
   continuePrompt,
   kickoffPrompt,
@@ -31,6 +38,10 @@ const VERSION = JSON.parse(readFileSync(join(PACKAGE_ROOT, "package.json"), "utf
 function fail(message, code = 1) {
   console.error(`${FAIL} ${red(message)}`);
   process.exit(code);
+}
+
+function indent(text) {
+  return text.split(/\r?\n/).map((line) => `    ${line}`).join("\n");
 }
 
 async function pickProvider(reports, cliFlag) {
@@ -90,6 +101,86 @@ async function pickProvider(reports, cliFlag) {
   }
 }
 
+/**
+ * Pick the model, ranked by intelligence. The ranking comes from the CursorBench
+ * 3.2 snapshot in jjcm/bb-plugin-autorouter (see lib/models.js); the ids are
+ * whatever the chosen CLI itself accepts, reconciled against its live model list
+ * when makefaster can ask for one.
+ *
+ * The list probe is also where a signed-out install surfaces first, because
+ * asking a CLI what models an account can run requires that account.
+ */
+async function pickModel(provider, modelFlag, cwd) {
+  const live = await listModels({ provider, cwd });
+  if (live.authRequired) fail(signedOutGuidance(provider, live.detail), 3);
+  const options = { live: live.models };
+
+  if (modelFlag) {
+    const model = resolveModel(provider.key, modelFlag, options);
+    if (model?.passthrough) {
+      console.log(dim(`  note: ${model.id} is not one of makefaster's ranked picks for ${provider.displayName} — passing it to the CLI as given.`));
+    }
+    return model;
+  }
+
+  const models = modelsForProvider(provider.key, options);
+  if (models.length === 0) return null;
+  if (models.length === 1) return models[0];
+  if (!process.stdin.isTTY) {
+    fail(`${provider.displayName} offers ${models.length} models but stdin is not a TTY — pass --model <${models[0].id}>`, 2);
+  }
+
+  const ranked = models.filter((model) => model.score !== null).length;
+  const source = live.models ? `from ${provider.displayName}'s own model list` : "from makefaster's catalog";
+  console.log(`  ${bold(`Which model should ${provider.displayName} run?`)} ${dim(`(${ranked} of ${models.length} ranked by CursorBench 3.2, ${source})`)}`);
+  console.log(dim("  the score ranks the model family; the id is what this CLI accepts"));
+  if (ranked < models.length) {
+    console.log(dim(`  ${provider.displayName} has ${ranked} model${ranked === 1 ? "" : "s"} in the snapshot; the rest are its own next-best models, unranked.`));
+  }
+
+  try {
+    const index = await selectFrom({
+      title: dim("  most intelligent first"),
+      options: models.map((model) => ({ label: `${model.label}  ${dim(model.id)}`, detail: model.detail })),
+      defaultIndex: 0,
+    });
+    if (index === null) process.exit(0);
+    return models[index];
+  } catch (err) {
+    if (err.code === "NO_TTY") {
+      fail(`${provider.displayName} offers ${models.length} models but stdin is not a TTY — pass --model <${models[0].id}>`, 2);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Run one round under makefaster's own full-screen dashboard. The agent CLI
+ * stays hidden behind piped stdio either way; this only decides who draws.
+ *
+ * The terminal is handed back before returning, so the end screen's questions
+ * happen on the normal screen — including when the user quits or the round
+ * throws.
+ */
+async function runRoundInDashboard({ provider, prompt, cwd, model, paths, state }) {
+  const controller = new AbortController();
+  const tui = createTui({ onQuit: () => controller.abort() });
+  const view = createLoopView({ tui, paths, state, provider, model });
+
+  tui.start();
+  view.append("OBSERVE", `round ${state.round}: driving ${provider.displayName} headlessly${model ? ` on ${model.id}` : ""}`);
+  view.render();
+  try {
+    const result = await runAgent({ provider, prompt, cwd, model, reporter: view.reporter, signal: controller.signal });
+    view.setStatus(result.aborted ? "STOPPED" : "DONE");
+    view.flush();
+    return result;
+  } finally {
+    view.stop();
+    tui.stop();
+  }
+}
+
 async function main() {
   const { args, errors } = parseArgs(process.argv.slice(2));
   if (errors.length > 0) {
@@ -109,7 +200,13 @@ async function main() {
   const provider = await pickProvider(reports, args.cli);
   console.log(`  ${OK} using ${bold(provider.displayName)} ${dim(provider.executablePath)}\n`);
 
-  // 2. Import the improvement checklist (live board -> GitHub -> target repo ->
+  // 2. Pick the model. makefaster reuses the credentials the CLI already stored
+  //    and never starts a login, opens a browser, or injects an API key — so a
+  //    signed-out install is reported here and the run stops.
+  const model = await pickModel(provider, args.model, cwd);
+  if (model) console.log(`  ${OK} model ${bold(model.label)} ${dim(model.id)}\n`);
+
+  // 3. Import the improvement checklist (live board -> GitHub -> target repo ->
   //    the catalog bundled with this CLI, which is what answers while the
   //    public board is still filling up).
   const apiBase = resolveApiBase({ flag: args.api });
@@ -126,10 +223,12 @@ async function main() {
     console.log(yellow("  clean keep/revert; the skill will fall back to file snapshots.\n"));
   }
 
-  // 3. Prepare the session contract in .makefaster/ and hand off to the agent.
+  // 4. Prepare the session contract in .makefaster/ and hand the work to the
+  //    agent CLI — as a hidden worker, so its own interface never draws here.
   const { paths, state } = prepareSession({
     cwd,
     provider,
+    model,
     checklist: checklist.categories,
     checklistSource: checklist.source,
     apiBase,
@@ -137,15 +236,27 @@ async function main() {
     siteUrl: args.url,
   });
 
+  const useTui = args.tui && tuiSupported();
   let prompt = kickoffPrompt();
   for (;;) {
-    console.log(`  ${cyan(ARROW)} handing off to ${bold(provider.displayName)} ${dim(`(round ${state.round})`)} — the loop runs in its session; exit it to come back here.\n`);
-    const { exitCode } = runAgent({ provider, prompt, cwd });
-    if (exitCode !== 0) {
+    console.log(`  ${cyan(ARROW)} running the loop in ${bold(provider.displayName)} ${dim(`(round ${state.round})`)} — hidden, no prompts; this can take a while.`);
+    if (useTui) console.log(dim("  makefaster takes the screen while it runs; press q to stop the round.\n"));
+    else console.log("");
+
+    const { exitCode, stderrTail, aborted, authRequired, detail } = useTui
+      ? await runRoundInDashboard({ provider, prompt, cwd, model, paths, state })
+      : await runAgent({ provider, prompt, cwd, model });
+
+    // A signed-out install can only be certain once the child has spoken.
+    if (authRequired) fail(signedOutGuidance(provider, detail || stderrTail), 3);
+
+    if (aborted) console.log(yellow(`  stopped ${provider.displayName} at your request.`));
+    else if (exitCode !== 0) {
       console.log(yellow(`\n  ${provider.displayName} exited with code ${exitCode}.`));
+      if (stderrTail) console.log(dim(indent(stderrTail.split(/\r?\n/).slice(-8).join("\n"))));
     }
 
-    // 4. End screen: summary + the three questions.
+    // 5. End screen: summary + the three questions, back on the normal screen.
     const results = readResults(cwd);
     const { loopMore } = await runEndScreen({ results, state, paths });
     if (!loopMore) break;
