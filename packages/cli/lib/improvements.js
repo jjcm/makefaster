@@ -1,12 +1,17 @@
 /**
- * Import the site's top-50 improvement categories — the checklist of likely
- * wins the loop consults. Sources, in order of freshness:
+ * Import the top improvement categories — the checklist of likely wins the loop
+ * consults. Sources, in order of freshness:
  *
  *   1. an explicit --improvements <path|url> override,
  *   2. the live leaderboard:   <apiBase>/data/improvements.json
  *   3. the repo on GitHub:     https://raw.githubusercontent.com/jjcm/makefaster/main/data/improvements.json
  *   4. the target repo itself: <cwd>/data/improvements.json (when present)
- *   5. the copy packaged with this CLI (offline fallback).
+ *   5. the checklist bundled with this CLI (packages/cli/data/improvements.json).
+ *
+ * The public boards only carry real submissions, so every remote source is
+ * empty until enough runs land — and an empty board is not a usable checklist.
+ * That is why the bundled copy exists and is a plain catalog of techniques with
+ * no measurements attached: it always gives the agent somewhere to start.
  *
  * The checklist is a guide of what has worked across sites — the skill is
  * told explicitly that it is NOT a script to apply blindly.
@@ -20,7 +25,8 @@ export const RAW_GITHUB_URL = "https://raw.githubusercontent.com/jjcm/makefaster
 const FETCH_TIMEOUT_MS = 6_000;
 const TOP_N = 50;
 
-const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+const CLI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+export const BUNDLED_CHECKLIST_PATH = join(CLI_ROOT, "data", "improvements.json");
 
 async function fetchJson(url) {
   const controller = new AbortController();
@@ -75,7 +81,7 @@ export async function importChecklist({ override, apiBase, cwd, rawUrl = RAW_GIT
     }
     attempts.push({ source: rawUrl, load: () => fetchJson(rawUrl) });
     attempts.push({ source: join(cwd, "data", "improvements.json"), load: () => readJsonFile(join(cwd, "data", "improvements.json")) });
-    attempts.push({ source: "packaged fallback", load: () => readJsonFile(join(PACKAGE_ROOT, "data", "improvements.json")) });
+    attempts.push({ source: "bundled fallback", load: () => readJsonFile(BUNDLED_CHECKLIST_PATH) });
   }
 
   const failures = [];

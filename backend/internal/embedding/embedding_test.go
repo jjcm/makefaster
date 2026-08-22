@@ -15,9 +15,12 @@ type category struct {
 	Description string `json:"description"`
 }
 
+// loadCategories reads backend/testdata/categories.json: a frozen 50-row board
+// that the threshold and reference-similarity tests below are pinned against.
+// It is test-only — the committed public seed in data/ is empty.
 func loadCategories(t *testing.T) []category {
 	t.Helper()
-	path := filepath.Join("..", "..", "..", "data", "improvements.json")
+	path := filepath.Join("..", "..", "testdata", "categories.json")
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
@@ -181,7 +184,7 @@ func TestNovelImprovementsStayBelowTheLocalThreshold(t *testing.T) {
 }
 
 // The Node implementation this replaced produced these similarities for the
-// same inputs against the committed seed board. They are recorded here so a
+// same inputs against the frozen fixture board. They are recorded here so a
 // change to the tokenizer, stemmer, feature weights, or hash seeds cannot
 // silently move the boundary between "folds into a category" and "creates one".
 func TestLocalMatchesTheReferenceSimilarities(t *testing.T) {
