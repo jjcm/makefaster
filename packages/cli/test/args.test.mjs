@@ -7,8 +7,15 @@ test("defaults", () => {
   assert.deepEqual(errors, []);
   assert.equal(args.targetDir, null);
   assert.equal(args.cli, null);
+  assert.equal(args.model, null);
   assert.equal(args.maxMisses, 5);
   assert.equal(args.help, false);
+});
+
+test("--model is taken verbatim, brackets and all", () => {
+  assert.equal(parseArgs(["--model", "gpt-5.6-sol"]).args.model, "gpt-5.6-sol");
+  assert.equal(parseArgs(["--model", "claude-opus-4-8[1m]"]).args.model, "claude-opus-4-8[1m]");
+  assert.match(parseArgs(["--model"]).errors[0], /needs a value/);
 });
 
 test("positional dir plus flags", () => {
@@ -43,4 +50,6 @@ test("help and version flags", () => {
   assert.equal(parseArgs(["--version"]).args.version, true);
   assert.match(USAGE, /npx makefaster/);
   assert.match(USAGE, /--max-misses/);
+  assert.match(USAGE, /--model <id>/);
+  assert.match(USAGE, /runs hidden/);
 });

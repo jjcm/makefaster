@@ -6,10 +6,16 @@
 export const USAGE = `Usage: npx makefaster [dir] [options]
 
 Runs the makefaster autoresearch loop against the site in [dir] (default:
-the current directory), driving an agent CLI you already have installed.
+the current directory), driving an agent CLI you already have installed and
+are signed into. The agent CLI runs hidden: makefaster keeps the terminal, so
+its native interface never draws and it never asks you to log in, trust the
+workspace, or approve individual tools.
 
 Options:
-  --cli <cursor|claude|codex>   Skip the picker and use this agent CLI
+  --cli <cursor|claude|codex>   Skip the provider picker and use this agent CLI
+  --model <id>                  Skip the model picker and use this model id
+                                (the ids come from the chosen CLI's own model
+                                list; see the picker for the ranked five)
   --url <example.com>           The public URL of the site (used for the
                                 site-leaderboard submission)
   --api <base>                  Leaderboard API base
@@ -23,6 +29,7 @@ Environment:
   CURSOR_AGENT_EXECUTABLE, CLAUDE_CODE_EXECUTABLE (or BB_CLAUDE_CODE_EXECUTABLE),
   CODEX_EXECUTABLE               Explicit paths to agent CLI binaries
   MAKEFASTER_API_BASE            Leaderboard API base
+  MAKEFASTER_SKIP_AUTH_CHECK     Skip the read-only "still signed in?" probe
   NO_COLOR                       Disable colors
 `;
 
@@ -36,6 +43,7 @@ export function parseArgs(argv) {
   const args = {
     targetDir: null,
     cli: null,
+    model: null,
     url: null,
     api: null,
     improvementsSource: null,
@@ -67,6 +75,11 @@ export function parseArgs(argv) {
           if (!key) errors.push(`--cli must be one of: cursor, claude, codex (got "${value}")`);
           else args.cli = key;
         }
+        break;
+      }
+      case "--model": {
+        const value = takeValue(argv, i, "--model");
+        if (value !== null) { i++; args.model = value; }
         break;
       }
       case "--url": {

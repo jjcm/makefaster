@@ -1,12 +1,15 @@
 /**
  * Session plumbing: the .makefaster/ working directory the CLI shares with
- * the agent, the kickoff/continue prompts, and the interactive agent spawn.
+ * the agent, the kickoff/continue prompts, and the hidden agent spawn.
  */
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildAgentInvocation, buildAuthProbe, interpretAuthProbe } from "./invoke.js";
+import { createProgressReporter, describeEvent } from "./progress.js";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const SKILL_SOURCE = join(PACKAGE_ROOT, "packages", "skill", "SKILL.md");
@@ -43,7 +46,7 @@ function excludeFromGit(cwd) {
   }
 }
 
-export function prepareSession({ cwd, provider, checklist, checklistSource, apiBase, maxMisses, siteUrl }) {
+export function prepareSession({ cwd, provider, model, checklist, checklistSource, apiBase, maxMisses, siteUrl }) {
   const paths = sessionPaths(cwd);
   mkdirSync(paths.dir, { recursive: true });
   copyFileSync(SKILL_SOURCE, paths.skill);
@@ -52,6 +55,8 @@ export function prepareSession({ cwd, provider, checklist, checklistSource, apiB
   const state = {
     version: 1,
     provider: provider.key,
+    model: model?.id ?? null,
+    modelLabel: model?.label ?? null,
     startedAt: new Date().toISOString(),
     apiBase,
     siteUrl: siteUrl || null,
@@ -111,18 +116,108 @@ export function continuePrompt() {
   ].join(" ");
 }
 
+const AUTH_PROBE_TIMEOUT_MS = 10_000;
+const STDERR_TAIL_MAX_CHARS = 4_000;
+
 /**
- * Hand the terminal to the chosen agent CLI. All three providers accept an
- * initial prompt as a positional argument and then run interactively, so the
- * user can watch and steer the loop.
+ * Ask the installed CLI whether it still holds credentials, without ever
+ * creating any. Read-only, piped, TTY-free, and time-bounded — an install that
+ * cannot answer is reported as "unknown" so the loop still runs.
+ *
+ * @returns {{state: "signed-in"|"signed-out"|"unknown", detail: string|null}}
  */
-export function runAgent({ provider, prompt, cwd }) {
-  const result = spawnSync(provider.executablePath, [prompt], {
-    cwd,
-    stdio: "inherit",
+export function checkSignedIn({ provider, env = process.env }) {
+  if (env.MAKEFASTER_SKIP_AUTH_CHECK) return { state: "unknown", detail: "skipped via MAKEFASTER_SKIP_AUTH_CHECK" };
+  const probe = buildAuthProbe({ provider, env });
+  if (!probe) return { state: "unknown", detail: null };
+  const result = spawnSync(probe.command, probe.args, { ...probe.options, timeout: AUTH_PROBE_TIMEOUT_MS });
+  return interpretAuthProbe({
+    status: result.status,
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    error: result.error || null,
+    timedOut: result.signal === "SIGTERM" && result.status === null,
+    signedOutExitCodes: probe.signedOutExitCodes,
   });
-  if (result.error) {
-    throw new Error(`failed to launch ${provider.displayName} (${provider.executablePath}): ${result.error.message}`);
-  }
-  return { exitCode: result.status ?? 0 };
+}
+
+/**
+ * Run one round of the loop in the chosen agent CLI, hidden.
+ *
+ * The child gets piped stdio and no stdin, so its native interface never draws
+ * and it never decides a human is available to answer a login, trust, or
+ * permission prompt. Its structured event stream is collapsed into a single
+ * progress line; `.makefaster/results.json` is what we actually read afterward.
+ *
+ * @returns {Promise<{exitCode: number, stderrTail: string, eventCount: number, lastLabel: string|null}>}
+ */
+export function runAgent({ provider, prompt, cwd, model = null, env = process.env, isRoot, reporter }) {
+  const rootProcess = isRoot ?? (typeof process.getuid === "function" ? process.getuid() === 0 : false);
+  const invocation = buildAgentInvocation({ provider, prompt, cwd, model: model?.id ?? model ?? null, env, isRoot: rootProcess });
+  const progress = reporter ?? createProgressReporter();
+
+  return new Promise((resolvePromise, rejectPromise) => {
+    let child;
+    try {
+      child = spawn(invocation.command, invocation.args, invocation.options);
+    } catch (err) {
+      rejectPromise(launchError(provider, err));
+      return;
+    }
+
+    let stderrTail = "";
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      progress.done();
+      resolvePromise(result);
+    };
+
+    if (child.stdout) {
+      const lines = createInterface({ input: child.stdout, terminal: false });
+      lines.on("line", (line) => {
+        const trimmed = line.trim();
+        if (trimmed === "") return;
+        let event = null;
+        try {
+          event = JSON.parse(trimmed);
+        } catch {
+          return; // non-JSON chatter on stdout is not ours to render
+        }
+        const label = describeEvent(invocation.streamFormat, event);
+        progress.update(label);
+      });
+    }
+
+    if (child.stderr) {
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk) => {
+        stderrTail = `${stderrTail}${chunk}`.slice(-STDERR_TAIL_MAX_CHARS);
+      });
+    }
+
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      progress.done();
+      rejectPromise(launchError(provider, err));
+    });
+
+    // `close` rather than `exit`: the event stream must be fully drained before
+    // we read results.json, or the last iteration's write can still be in
+    // flight (bb's codex bridge finalizes on close for the same reason).
+    child.on("close", (code, signal) => {
+      finish({
+        exitCode: code ?? (signal ? 1 : 0),
+        stderrTail: stderrTail.trim(),
+        eventCount: progress.eventCount,
+        lastLabel: progress.lastLabel,
+      });
+    });
+  });
+}
+
+function launchError(provider, err) {
+  return new Error(`failed to launch ${provider.displayName} (${provider.executablePath}): ${err.message}`);
 }

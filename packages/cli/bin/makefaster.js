@@ -2,8 +2,10 @@
 /**
  * npx makefaster — run the autoresearch performance loop against the site in
  * the current directory, driving an agent CLI you already have installed
- * (Cursor Agent, Claude Code, or Codex). See packages/skill/SKILL.md for the
- * loop itself and README.md for the full flow.
+ * (Cursor Agent, Claude Code, or Codex). The agent CLI is driven as a hidden
+ * worker: see packages/cli/lib/invoke.js for why nothing inherits this
+ * terminal, packages/skill/SKILL.md for the loop itself, and README.md for the
+ * full flow.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -14,8 +16,11 @@ import { resolveApiBase } from "../lib/apiClient.js";
 import { detectProviders, missingCliGuidance } from "../lib/detect.js";
 import { runEndScreen } from "../lib/endscreen.js";
 import { importChecklist } from "../lib/improvements.js";
+import { signedOutGuidance } from "../lib/invoke.js";
+import { modelsForProvider, resolveModel } from "../lib/models.js";
 import { confirm, selectFrom } from "../lib/picker.js";
 import {
+  checkSignedIn,
   continuePrompt,
   kickoffPrompt,
   prepareSession,
@@ -31,6 +36,10 @@ const VERSION = JSON.parse(readFileSync(join(PACKAGE_ROOT, "package.json"), "utf
 function fail(message, code = 1) {
   console.error(`${FAIL} ${red(message)}`);
   process.exit(code);
+}
+
+function indent(text) {
+  return text.split(/\r?\n/).map((line) => `    ${line}`).join("\n");
 }
 
 async function pickProvider(reports, cliFlag) {
@@ -90,6 +99,56 @@ async function pickProvider(reports, cliFlag) {
   }
 }
 
+/**
+ * Pick the model, ranked by intelligence. The catalog and its ranking come from
+ * the CursorBench 3.2 snapshot in jjcm/bb-plugin-autorouter (see lib/models.js);
+ * the ids are whatever the chosen CLI itself accepts.
+ */
+async function pickModel(provider, modelFlag) {
+  if (modelFlag) {
+    const model = resolveModel(provider.key, modelFlag);
+    if (model?.passthrough) {
+      console.log(dim(`  note: ${model.id} is not one of makefaster's ranked picks for ${provider.displayName} — passing it to the CLI as given.`));
+    }
+    return model;
+  }
+
+  const models = modelsForProvider(provider.key);
+  if (models.length === 0) return null;
+  if (models.length === 1) return models[0];
+
+  const ranked = models.filter((model) => model.score !== null).length;
+  console.log(`  ${bold(`Which model should ${provider.displayName} run?`)} ${dim(`(${ranked} of ${models.length} ranked by CursorBench 3.2)`)}`);
+  if (ranked < models.length) {
+    console.log(dim(`  ${provider.displayName} only has ${ranked} model${ranked === 1 ? "" : "s"} in the snapshot; the rest are its own next-best models, unranked.`));
+  }
+
+  try {
+    const index = await selectFrom({
+      title: dim("  most intelligent first"),
+      options: models.map((model) => ({ label: `${model.label}  ${dim(model.id)}`, detail: model.detail })),
+      defaultIndex: 0,
+    });
+    if (index === null) process.exit(0);
+    return models[index];
+  } catch (err) {
+    if (err.code === "NO_TTY") {
+      fail(`${provider.displayName} offers ${models.length} models but stdin is not a TTY — pass --model <${models[0].id}>`, 2);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Confirm the install still holds credentials before handing it any work. This
+ * only reads stored state; makefaster never starts a login, opens a browser, or
+ * prints a device code.
+ */
+function requireSignedIn(provider) {
+  const { state, detail } = checkSignedIn({ provider });
+  if (state === "signed-out") fail(signedOutGuidance(provider, detail), 3);
+}
+
 async function main() {
   const { args, errors } = parseArgs(process.argv.slice(2));
   if (errors.length > 0) {
@@ -109,7 +168,13 @@ async function main() {
   const provider = await pickProvider(reports, args.cli);
   console.log(`  ${OK} using ${bold(provider.displayName)} ${dim(provider.executablePath)}\n`);
 
-  // 2. Import the improvement checklist (live board -> GitHub -> target repo ->
+  // 2. Pick the model, then check the install is still signed in — makefaster
+  //    reuses its credentials and never starts a login of its own.
+  const model = await pickModel(provider, args.model);
+  if (model) console.log(`  ${OK} model ${bold(model.label)} ${dim(model.id)}\n`);
+  requireSignedIn(provider);
+
+  // 3. Import the improvement checklist (live board -> GitHub -> target repo ->
   //    the catalog bundled with this CLI, which is what answers while the
   //    public board is still filling up).
   const apiBase = resolveApiBase({ flag: args.api });
@@ -126,10 +191,12 @@ async function main() {
     console.log(yellow("  clean keep/revert; the skill will fall back to file snapshots.\n"));
   }
 
-  // 3. Prepare the session contract in .makefaster/ and hand off to the agent.
+  // 4. Prepare the session contract in .makefaster/ and hand the work to the
+  //    agent CLI — as a hidden worker, so its own interface never draws here.
   const { paths, state } = prepareSession({
     cwd,
     provider,
+    model,
     checklist: checklist.categories,
     checklistSource: checklist.source,
     apiBase,
@@ -139,13 +206,14 @@ async function main() {
 
   let prompt = kickoffPrompt();
   for (;;) {
-    console.log(`  ${cyan(ARROW)} handing off to ${bold(provider.displayName)} ${dim(`(round ${state.round})`)} — the loop runs in its session; exit it to come back here.\n`);
-    const { exitCode } = runAgent({ provider, prompt, cwd });
+    console.log(`  ${cyan(ARROW)} running the loop in ${bold(provider.displayName)} ${dim(`(round ${state.round})`)} — hidden, no prompts; this can take a while.\n`);
+    const { exitCode, stderrTail } = await runAgent({ provider, prompt, cwd, model });
     if (exitCode !== 0) {
       console.log(yellow(`\n  ${provider.displayName} exited with code ${exitCode}.`));
+      if (stderrTail) console.log(dim(indent(stderrTail.split(/\r?\n/).slice(-8).join("\n"))));
     }
 
-    // 4. End screen: summary + the three questions.
+    // 5. End screen: summary + the three questions.
     const results = readResults(cwd);
     const { loopMore } = await runEndScreen({ results, state, paths });
     if (!loopMore) break;
