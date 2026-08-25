@@ -46,18 +46,21 @@ What happens:
 5. **Imports the improvement checklist** — up to the top 50 categories from the
    live leaderboard, falling back to the technique catalog bundled at
    [`packages/cli/data/improvements.json`](packages/cli/data/improvements.json)
-   while the public board is still filling up. Either way it is a guide of
-   likely wins, not a script.
+   while the public board is still filling up. Either way that ranked list is
+   the order the loop works in.
 6. **Runs the agent CLI hidden** with the loop skill
    ([`packages/skill/SKILL.md`](packages/skill/SKILL.md)): profile a
    user-felt metric (Lighthouse if available; cold + warm; median of ≥3 runs),
-   then one hypothesis per iteration — measure, keep if it beats the noise
-   floor, revert otherwise. The other product's interface never draws and never
+   then walk the imported checklist in rank order — one category per iteration,
+   skipping what plainly does not apply — and finish with exactly five
+   hypotheses of the agent's own. Measure each one, keep it if it beats the
+   noise floor, revert otherwise. The other product's interface never draws and never
    prompts you (see [The native CLI stays hidden](#the-native-cli-stays-hidden));
    makefaster shows [its own dashboard](#the-dashboard) instead.
-7. **Stops after 5 consecutive misses** (no serious improvement: ≥5% or
-   ≥20 ms on the north-star metric, and FCP-only wins that regress LCP don't
-   count), then leaves the dashboard and shows the end screen with three
+7. **Stops when the checklist and the five extras are done** — or earlier,
+   after 5 consecutive misses (no serious improvement: ≥5% or ≥20 ms on the
+   north-star metric, and FCP-only wins that regress LCP don't count) — then
+   leaves the dashboard and shows the end screen with three
    questions:
    - **Loop more?** — resets the miss counter and continues.
    - **Submit stats to the Site leaderboard?** — your URL and favicon are
@@ -79,21 +82,29 @@ Usage: npx makefaster [dir] [options]
 ```
 
 Session state lives in `.makefaster/` in the target repo (auto-excluded from
-git via `.git/info/exclude`). The chosen provider and model are recorded in
-`.makefaster/state.json`.
+git via `.git/info/exclude`): `SKILL.md` and `improvements.json` are what the
+CLI hands the agent, `state.json` records the chosen provider, model and loop
+limits, and the agent writes back `results.json` (the record the CLI reads) and
+`thinking.log` (one tagged line per step, which is what the dashboard shows).
 
 ## The dashboard
 
 While the agent works, makefaster owns the screen: an alternate-screen TUI with
 no dependencies — raw ANSI, three panels, repainted from
-`.makefaster/results.json` and from the hidden agent's event stream.
+`.makefaster/results.json` and `.makefaster/thinking.log`.
 
 ![The makefaster dashboard](docs/dashboard.png)
 
-- **AGENT THINKING** — a timestamped log of the loop's steps (`OBSERVE`,
-  `HYPOTHESIS`, `PLAN`, `EXECUTE`, `TEST`, `RESULT`, `COMPARE`). Tool calls come
-  from the agent's stream; `RESULT` and `COMPARE` come from `results.json`, so
-  they are measurements rather than narration.
+- **AGENT THINKING** — a timestamped line per step of the loop, each one a
+  single tagged sentence: `INITIALIZING`, `TEST`, `CHECKLIST`, `SKIP`, `TRY`,
+  `RESULT`, `EXTRA`, `DONE`. The agent writes them to `.makefaster/thinking.log`
+  as each step begins (the contract is in `packages/skill/SKILL.md`), and
+  `TRY`/`RESULT` lines are also derived from `results.json` so the numbers are
+  measurements rather than narration. The hidden agent's protocol stream feeds
+  this panel **nothing**: it is a tool-call transcript — `working`,
+  `Read File`, `approved bash` — which says the agent is busy without ever
+  saying what it is doing, and it buried the two lines a reader wanted. It is
+  still consumed as the child's heartbeat.
 - **AUTORESEARCH / WEBSITE SPEED** — the loop counter, the current experiment,
   and every metric the session measured (`lcpMs`, `tbtMs`, `fcpMs`, `ttiMs`,
   plus `cls` and `score` when the agent records them) as candidate vs baseline.

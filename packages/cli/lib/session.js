@@ -24,6 +24,7 @@ export function sessionPaths(cwd) {
     improvements: join(dir, "improvements.json"),
     state: join(dir, "state.json"),
     results: join(dir, "results.json"),
+    steps: join(dir, "thinking.log"),
     pending: join(dir, "pending-submissions.json"),
   };
 }
@@ -51,6 +52,9 @@ export function prepareSession({ cwd, provider, model, checklist, checklistSourc
   mkdirSync(paths.dir, { recursive: true });
   copyFileSync(SKILL_SOURCE, paths.skill);
   writeFileSync(paths.improvements, JSON.stringify({ source: checklistSource, categories: checklist }, null, 2) + "\n");
+  // A fresh session starts on an empty panel rather than replaying the last
+  // run's steps.
+  writeFileSync(paths.steps, "");
 
   const state = {
     version: 1,
@@ -95,13 +99,17 @@ export function readResults(cwd) {
 export function kickoffPrompt() {
   return [
     "Read .makefaster/SKILL.md and follow it exactly. It defines the makefaster",
-    "performance loop for the site in this repo: profile a user-felt metric,",
-    "form ONE hypothesis per iteration, measure, keep it only if it beats the",
-    "noise floor, otherwise revert. The checklist of likely wins is",
-    ".makefaster/improvements.json (a guide, not a script). Loop limits live in",
-    ".makefaster/state.json — stop when missStreak reaches maxMisses. Keep",
-    ".makefaster/results.json valid and up to date after every iteration",
-    "(schema is in the skill); the CLI reads it when you exit.",
+    "performance loop for the site in this repo: baseline a user-felt metric,",
+    "then walk .makefaster/improvements.json in rank order, one category per",
+    "iteration — skip what plainly does not apply, implement the smallest change",
+    "for what does, measure, keep it only if it beats the noise floor, otherwise",
+    "revert — and finish with exactly 5 hypotheses of your own. Loop limits live",
+    "in .makefaster/state.json — stop when missStreak reaches maxMisses. Keep",
+    ".makefaster/results.json valid and up to date after every iteration (schema",
+    "is in the skill); the CLI reads it when you exit. Report each step as one",
+    "tagged line appended to .makefaster/thinking.log — that file is the only",
+    "thing the user's dashboard shows, so write it as you go and keep tool",
+    "output out of it.",
   ].join(" ");
 }
 
@@ -111,8 +119,11 @@ export function continuePrompt() {
     "loop more, so the miss counter in .makefaster/state.json was reset. Re-read",
     ".makefaster/SKILL.md for the rules and .makefaster/results.json for what",
     "was already tried (do not repeat reverted experiments without a new reason).",
-    "Same discipline: one hypothesis per iteration, measure, keep or revert,",
-    "update results.json every iteration, stop when missStreak reaches maxMisses.",
+    "Resume where the order left off: any remaining checklist categories first,",
+    "then your own hypotheses. Same discipline: one hypothesis per iteration,",
+    "measure, keep or revert, update results.json every iteration, keep appending",
+    "one tagged line per step to .makefaster/thinking.log, and stop when",
+    "missStreak reaches maxMisses.",
   ].join(" ");
 }
 

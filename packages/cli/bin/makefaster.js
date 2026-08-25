@@ -168,7 +168,7 @@ async function runRoundInDashboard({ provider, prompt, cwd, model, paths, state 
   const view = createLoopView({ tui, paths, state, provider, model });
 
   tui.start();
-  view.append("OBSERVE", `round ${state.round}: driving ${provider.displayName} headlessly${model ? ` on ${model.id}` : ""}`);
+  view.append("INITIALIZING", `Round ${state.round}: driving ${provider.displayName} headlessly${model ? ` on ${model.id}` : ""}.`);
   view.render();
   try {
     const result = await runAgent({ provider, prompt, cwd, model, reporter: view.reporter, signal: controller.signal });

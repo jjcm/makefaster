@@ -1,17 +1,24 @@
 /**
  * The live view of one loop round: owns the log buffer, watches
- * `.makefaster/results.json`, and repaints the dashboard.
+ * `.makefaster/results.json` and `.makefaster/thinking.log`, and repaints the
+ * dashboard.
  *
- * Two inputs feed it, and they answer different questions:
- *   - the hidden agent's event stream says what the agent is doing right now
- *     (OBSERVE / PLAN / EXECUTE / TEST lines);
+ * Two inputs feed the AGENT THINKING panel, and they answer different questions:
+ *   - `.makefaster/thinking.log` is what the agent says it is doing, one tagged
+ *     sentence per step (see stepLog.js);
  *   - results.json says what actually happened, and is the only thing trusted
- *     for numbers — every RESULT and COMPARE line, every metric, and every bar
- *     comes from the file, so the panels stay correct even for an agent that
- *     streams nothing at all.
+ *     for numbers — every RESULT line, every metric, and every bar comes from
+ *     the file, so the panels stay correct even for an agent that reports
+ *     nothing at all.
+ *
+ * The hidden agent's protocol stream deliberately feeds neither. It is still
+ * consumed — it is the heartbeat that proves the child is alive, and it is what
+ * `eventCount` counts — but a tool-call transcript is not a report, and putting
+ * it in the panel drowned the two lines a reader actually wanted.
  */
 
 import { watchResults } from "./resultsWatch.js";
+import { watchStepLog } from "./stepLog.js";
 
 const MAX_LOG_ENTRIES = 500;
 
@@ -59,7 +66,11 @@ export function createLoopView({ tui, paths, state, provider, model, now = () =>
     tui.render({ results, log, state, provider, model, status, updatedAt });
   }
 
-  /** Turn a fresh results.json into the log lines the stream cannot provide. */
+  /**
+   * Turn a fresh results.json into the log lines the agent's own report cannot
+   * be trusted for: the numbers. One line per measurement, in the same tagged
+   * one-sentence shape as everything else in the panel.
+   */
   function ingest(next, meta) {
     results = next;
     updatedAt = clockOf(meta?.changedAt ?? now());
@@ -68,28 +79,46 @@ export function createLoopView({ tui, paths, state, provider, model, now = () =>
       announcedBaseline = true;
       const mode = next.baseline.cold ? "cold" : "warm";
       const lcp = next.baseline[mode]?.lcpMs;
-      append("OBSERVE", `baseline measured (${mode})${Number.isFinite(lcp) ? `: LCP ${Math.round(lcp)}ms` : ""}`);
+      append("TEST", `Baseline measured (${mode})${Number.isFinite(lcp) ? `: LCP ${Math.round(lcp)}ms` : ""}`);
     }
 
     const iterations = Array.isArray(next?.iterations) ? next.iterations : [];
     for (const iteration of iterations.slice(seenIterations)) {
-      append("HYPOTHESIS", iteration?.name || "unnamed experiment");
-      if (iteration?.description) append("PLAN", iteration.description);
+      // One line per iteration, and it names the experiment: the agent has
+      // usually already reported `[TRY] <name>`, so repeating that would be a
+      // second row saying nothing new — but this line still stands alone for an
+      // agent that reports nothing at all.
       const parts = [
         Number.isFinite(iteration?.deltaMs) ? signedMs(iteration.deltaMs) : null,
         Number.isFinite(iteration?.deltaPct) ? signedPct(iteration.deltaPct) : null,
       ].filter(Boolean);
-      append("RESULT", parts.length > 0 ? `measured ${parts.join(" / ")} on ${next?.northStar || "lcp"}` : "measured, no delta recorded");
-      append("COMPARE", iteration?.kept === true ? "beat the noise floor — kept, new best candidate" : "did not beat the noise floor — reverted");
+      const measured = parts.length > 0
+        ? `${parts.join(" / ")} on ${next?.northStar || "lcp"}`
+        : "no delta recorded";
+      const verdict = iteration?.kept === true ? "kept" : "reverted, did not beat the noise floor";
+      append("RESULT", `${iteration?.name || "Unnamed experiment"}: ${measured} — ${verdict}`);
     }
     seenIterations = iterations.length;
     render();
   }
 
   const watcher = watchResults({ path: paths.results, onChange: ingest });
+  const steps = watchStepLog({
+    path: paths.steps,
+    onStep: (step) => {
+      append(step.tag, step.text);
+      render();
+    },
+  });
 
   return {
-    /** The shape runAgent expects, so the stream lands in the log panel. */
+    /**
+     * The shape runAgent expects. It counts the protocol stream and remembers
+     * the last thing the child said, which is what the non-TUI path prints and
+     * what proves the agent is still alive — but nothing from the stream reaches
+     * the panel. Progress belongs to the agent's own report; a transcript of
+     * `Read File` / `working` / `approved bash` is noise wearing a tag.
+     */
     reporter: {
       get eventCount() {
         return eventCount;
@@ -100,10 +129,8 @@ export function createLoopView({ tui, paths, state, provider, model, now = () =>
       update(entry) {
         eventCount += 1;
         if (!entry) return;
-        const { tag, text } = typeof entry === "string" ? { tag: "EXECUTE", text: entry } : entry;
-        lastLabel = text;
-        append(tag, text);
-        render();
+        const text = typeof entry === "string" ? entry : entry?.text;
+        if (text) lastLabel = text;
       },
       done() {
         render();
@@ -121,12 +148,17 @@ export function createLoopView({ tui, paths, state, provider, model, now = () =>
       status = next;
       render();
     },
-    /** One last poll, so an iteration written as the agent exited is not missed. */
+    /**
+     * One last poll of both files, so an iteration or a summary written as the
+     * agent exited is not missed.
+     */
     flush() {
+      steps.poll();
       watcher.poll();
       render();
     },
     stop() {
+      steps.stop();
       watcher.stop();
     },
   };
