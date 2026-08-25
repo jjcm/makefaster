@@ -88,3 +88,23 @@ test("buildImprovementsPayload keeps only kept iterations with deltas, anonymous
   assert.equal(buildImprovementsPayload({ iterations: [] }), null);
   assert.equal(buildImprovementsPayload({}), null);
 });
+
+test("buildImprovementsPayload leaves site-specific notes on the machine", () => {
+  const payload = buildImprovementsPayload({
+    iterations: [{
+      n: 1,
+      name: "Reduce font payload",
+      description: "Ship only the font weights and styles the page actually paints",
+      category: "Reduce Font Payload",
+      notes: "Playfair Display cut from 4 weights x 2 styles in src/styles/fonts.css",
+      deltaMs: -260,
+      kept: true,
+    }],
+  });
+  assert.deepEqual(payload.improvements[0], {
+    name: "Reduce font payload",
+    description: "Ship only the font weights and styles the page actually paints",
+    deltaMs: -260,
+  });
+  assert.equal(JSON.stringify(payload).includes("Playfair"), false, "notes must not be submitted");
+});

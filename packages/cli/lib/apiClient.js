@@ -82,7 +82,9 @@ export function buildSitePayloads(results, siteUrl) {
 
 /**
  * The anonymous improvements payload: kept iterations only, no URL, no site
- * identity — just names, descriptions, and measured deltas.
+ * identity — just names, descriptions, and measured deltas. The fields are
+ * listed one by one rather than spread, so an iteration's `notes` (where the
+ * skill puts everything specific to this repo) cannot ride along.
  */
 export function buildImprovementsPayload(results) {
   const kept = (results?.iterations || [])

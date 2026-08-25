@@ -292,7 +292,7 @@ start empty and grow as loops report results:
 | `GET /data/improvements.json` | live ranked categories | `MakefasterAPI.getImprovements()` |
 | `GET /api/health` | `{ ok, embedder, threshold }` | — |
 | `POST /api/submit-site` | `{ url, favicon?, name?, lcpBefore?, lcpRaw, lcpDelta, ttiBefore?, ttiRaw, ttiDelta, mode: cold\|warm }` — upserts the site's row; URL + favicon shown publicly | `MakefasterAPI.submitSite(payload)` |
-| `POST /api/submit-improvements` | `{ improvements: [{ name, description?, deltaMs?, deltaPct? }] }` — anonymous; names are normalized to generic techniques and embedding-matched into categories | `MakefasterAPI.submitImprovements(payload)` |
+| `POST /api/submit-improvements` | `{ improvements: [{ name, description?, deltaMs?, deltaPct? }] }` — anonymous; names and descriptions are normalized to generic techniques and embedding-matched into categories | `MakefasterAPI.submitImprovements(payload)` |
 
 Each metric has both ends of the run: `lcpRaw`/`ttiRaw` are the measurement
 after the last kept change, `lcpBefore`/`ttiBefore` the pre-loop baseline, and
@@ -317,6 +317,18 @@ family into five buckets (components, unseen images, third-party SDKs,
 analytics, data fetches), and maps other known families onto their technique
 name. A name that already matches a category on the board wins over any rule.
 The rule is documented for submitters in `packages/skill/SKILL.md`.
+
+The **description** a row shows goes through the same treatment, because a
+technique name over one repo's changelog — `Reduce Font Payload` / "Playfair
+Display cut from 4 weights x 2 styles…" — tells the next site nothing it can
+act on. A submitted description is read for the things that can only mean one
+repo (module and file names, route paths, CSS declarations, byte sizes and other
+measurements, known product nouns, past-tense changelog voice) and, if any turn
+up, replaced: with the catalog's own line for the technique when the board names
+one, otherwise with the submission minus those tokens, otherwise with a
+placeholder. A fold keeps the row's existing description — a fold is one more
+site reporting the same technique, not a re-titling — and only upgrades it when
+the row still carries a site-specific one.
 
 The normalized name then decides the fold: a category whose name carries the
 same significant word stems folds without consulting the embedder, and anything
@@ -422,11 +434,17 @@ run. Coverage: seed-from-file against a one-site, one-category fixture in
 `backend/internal/http/testdata/seed/`; a fresh migrate against the committed
 (empty) seed leaving both endpoints serving `[]`; `201` then `200` on a repeated
 submission; the board surviving a process restart; the health payload;
-static/SPA fallback and legacy redirects; CORS; and the body cap.
+static/SPA fallback and legacy redirects; CORS; and the body cap. They also run
+the two board migrations against the live rows they were written for: the
+generic-name rename (00002) and the generic-description backfill (00004), the
+latter both forwards and rolled back.
 
 The categorization and embedding tests need a realistic board to match against,
 so they read `backend/testdata/categories.json` — a frozen 50-row fixture that
-is test-only and never served. The embedding tests pin the local match threshold
+is test-only and never served. `backend/testdata/category_descriptions.json` is
+the other half: the description every live row carried before migration 00004
+and the technique blurb that replaced it, which is what keeps the migration, the
+ingest catalog, and the rollback in agreement. The embedding tests pin the local match threshold
 and the exact similarity scores the Node implementation produced against it, so
 the fold-vs-create boundary cannot drift.
 

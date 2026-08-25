@@ -95,39 +95,54 @@ One hypothesis per iteration, no exceptions:
    `results.json` valid JSON at all times — the CLI parses it the moment you
    exit, even if you were interrupted.
 
-## Naming an improvement — generic techniques only
+## Naming and describing an improvement — generic techniques only
 
-**Hard rule: every `iterations[].category` (and the `name` you submit with it)
-is the name of a GENERIC TECHNIQUE that could apply to any site.** The
-improvement leaderboard is a shared catalog of techniques, not a changelog of
-your repo. A name that only makes sense to someone who has read your source
-tree is a bad name.
+**Hard rule: every `iterations[].category`, the `name` you submit with it, AND
+its `description` describe a GENERIC TECHNIQUE that could apply to any site.**
+The improvement leaderboard is a shared catalog of techniques, not a changelog
+of your repo. Both the name and the description are published on it, so a line
+that only makes sense to someone who has read your source tree is useless
+there.
 
-A category name must never contain:
+None of those three fields may contain:
 
-- **product or component proper nouns** — `Mermaid`, `Firebase`, `Amplitude`,
-  `ChatControls`, `AppInitPage`;
+- **product or component proper nouns** — `Mermaid`, `Playfair Display`,
+  `Excalifont`, `Firebase`, `Amplitude`, `GrowthBook`, `ChatControls`,
+  `AppInitPage`;
 - **file or module names** — `rocket.gif`, `highlight.js/lib/common`,
-  `moment-timezone`, `basic_examples`;
-- **byte sizes, versions, or counts** — `262KB`, `4 weights`, `v3.2`;
-- **CSS class names, route paths, or API paths**;
+  `moment-timezone`, `basic_examples`, `index.html`;
+- **byte sizes, versions, counts, or measurements** — `262KB`, `4 weights`,
+  `v3.2`, `28.8KB -> 11KB`, `~270 chunks`;
+- **CSS class names or declarations, route paths, or API paths** —
+  `display:none`, `client:load`, `/api/v1/all`;
 - **process footnotes** — `(re-test after landscape change)`,
-  `(same as iteration 4)`, `(second attempt)`.
+  `(same as iteration 4)`, `(second attempt)`;
+- **changelog voice** — `Added…`, `Removed…`, `Switched…`, `…was fetched…`. A
+  technique is written in the present tense, as an instruction to the next
+  site.
 
-Put every one of those in the **description** instead. The description is
-where the site-specific detail belongs; the **name must be reusable by the
-next site.**
+Site-specific detail still belongs in `results.json` — put it in
+`iterations[].notes`, which never leaves the machine and is exactly what you
+want when you write the commit or PR for the change in **this** repo.
 
-| bad (site-specific) | good (generic technique) |
+| bad (one repo) | good (generic technique) |
 |---|---|
-| `Inline the Shared Stylesheet (re-test After Landscape Change)` | `Inline shared stylesheets` |
-| `Lazy-load Chat Side-pane Components` | `Lazy-load components` |
-| `Lazy-load Hidden 262KB Changelog Rocket.gif` | `Lazy-load unseen images` |
-| `Gzip-precompressed static assets` | `Precompress static assets` |
-| `Enable Gzip Text Compression on the Production Server` | `Enable gzip` |
-| `Import highlight.js/lib/common` | `Subset syntax-highlighter bundle` (or fold into `Reduce unused JS`) |
-| `Playfair Display 4 Weights → 1` | `Reduce font payload` |
-| `Remove Duplicate 1MB Basic_examples Fetch` | `Skip redundant fetches` |
+| **name** `Inline the Shared Stylesheet (re-test After Landscape Change)` | `Inline shared stylesheets` |
+| **name** `Lazy-load Chat Side-pane Components` | `Lazy-load components` |
+| **name** `Lazy-load Hidden 262KB Changelog Rocket.gif` | `Lazy-load unseen images` |
+| **name** `Gzip-precompressed static assets` | `Precompress static assets` |
+| **name** `Enable Gzip Text Compression on the Production Server` | `Enable gzip` |
+| **name** `Import highlight.js/lib/common` | `Subset syntax-highlighter bundle` |
+| **name** `Playfair Display 4 Weights → 1` | `Reduce font payload` |
+| **name** `Remove Duplicate 1MB Basic_examples Fetch` | `Skip redundant fetches` |
+| **description** `Playfair Display cut from 4 weights x 2 styles to the single 400-italic actually used; disabled preload for Playfair, Geist Mono and Noto Sans Arabic` | `Ship only the font weights and styles the page actually paints, and avoid preloading fonts that are unused on the entry route.` |
+| **description** `Removed a manualChunks pin that hoisted the ~170KB-gzip mermaid-to-excalidraw chunk onto the boot critical path` | `Keep heavy optional libraries off the boot path by importing them only from the UI that needs them.` |
+| **description** `AppInitPage refetched the ~1MB /api/v1/flows/basic_examples payload whenever the config query landed` | `Do not download the same payload twice during boot; reuse the in-flight or cached response.` |
+| **description** `svgo (precision 1) on the boot-shell logo SVGs cut them 28.8KB->11KB, shrinking index.html 16.3KB->8.6KB gzip` | `Minify inline and static SVGs so the document and images cost fewer bytes on the critical path.` |
+
+The test for a description: **would it still be true and useful on a site you
+have never seen?** If it names your files, your libraries, or your byte counts,
+it is a note, not a description.
 
 Do **not** invent a category per component type. `Lazy-load Chat Side-pane
 Components`, `Lazy-load the Settings Modal`, and `Lazy-load the JSON Editor`
@@ -142,16 +157,20 @@ When writing `results.json`:
    what makes `count` on the public board mean anything.
 2. **Only invent a new category when the technique is genuinely novel** — and
    even then the name must still be generic. If you cannot phrase it so another
-   site could use it verbatim, it is not a category, it is a description.
+   site could use it verbatim, it is not a category, it is a note.
 3. Leave `category` as `null` if nothing fits and you cannot phrase a generic
    name; the server will fold the submission by similarity rather than let a
    one-off name onto the board.
+4. **Reuse the checklist category's own description** when you fold into one.
+   You are reporting one more site where that technique worked, not renaming it.
 
 The server enforces this on ingest too — it strips parentheticals, file names,
-byte sizes, and identifiers out of submitted names, and folds the `lazy-load X`
-family into a small fixed set of buckets — so a site-specific name does not
-create a site-specific row. Write the generic name yourself anyway; the
-normalizer is a backstop, not a naming service.
+byte sizes and identifiers out of submitted names, folds the `lazy-load X`
+family into a small fixed set of buckets, and replaces a description that names
+your repo with the catalog's own line for the technique (or drops it entirely if
+it cannot). So a site-specific submission does not create a site-specific row.
+Write the generic name and description yourself anyway: the normalizer is a
+backstop, not a copywriter, and what it cannot rescue it throws away.
 
 ## Step 3 — the stop rule
 
@@ -212,17 +231,19 @@ milliseconds. Deltas are negative when the site got faster.
     {
       "n": 1,
       "name": "Inline critical CSS",
-      "description": "Inlined above-the-fold styles into the document head",
+      "description": "Inline the above-the-fold rules first paint needs and load the rest of the stylesheet asynchronously",
       "category": "Inline Critical CSS",
+      "notes": "Extracted the 4.1KB of rules the hero uses out of app.css into <style> in index.html",
       "deltaMs": -260,
       "deltaPct": -10.8,
       "kept": true
     },
     {
       "n": 2,
-      "name": "Preload first 8 thumbnails",
-      "description": "Preload hints for the first grid images",
-      "category": "Resource Preloading",
+      "name": "Preload LCP image",
+      "description": "Preload the image the largest contentful paint waits on",
+      "category": "Preload LCP Image",
+      "notes": "Added <link rel=preload> for the first 8 grid thumbnails; LCP regressed, reverted",
       "deltaMs": 150,
       "deltaPct": 6.2,
       "kept": false
@@ -250,10 +271,19 @@ Field notes:
   or `null` when it is genuinely novel (the server will embed the name +
   description and either fold it into the closest category or create a new
   one on the improvement leaderboard). It must be a **generic technique
-  name** — see "Naming an improvement" above; site-specific names are the one
-  thing that makes this board useless.
+  name** — see "Naming and describing an improvement" above; site-specific
+  names are the one thing that makes this board useless.
 - `iterations[].name` — a short generic label for what you did, under the same
-  naming rule as `category`. Everything site-specific goes in `description`.
+  naming rule as `category`.
+- `iterations[].description` — one line explaining the **technique** the way the
+  next site would apply it. This is published as the category's description on
+  the improvement leaderboard, so the naming rule applies to it word for word:
+  no product names, file paths, class names, route paths, byte sizes or
+  past-tense narration.
+- `iterations[].notes` — optional, and the one place site-specific detail
+  belongs: the files you touched, the sizes you measured, why you reverted.
+  Never submitted anywhere; it stays in `results.json` for the writeup you make
+  in this repo.
 - `iterations[].deltaMs` / `deltaPct` — measured north-star change for that
   single iteration (median vs. the previous kept state), negative = faster.
 - `missStreak` — mirror of the counter in `state.json` at exit time.

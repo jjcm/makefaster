@@ -24,19 +24,21 @@ This skill's loop discipline is packaged as [makefaster](https://github.com/jjcm
 
 The operational loop skill lives at [`packages/skill/SKILL.md`](https://github.com/jjcm/makefaster/blob/main/packages/skill/SKILL.md) in that repo; the document you are reading is its technique catalog — read it when picking hypotheses.
 
-### Name techniques generically
+### Name *and describe* techniques generically
 
-Everything in this catalog is named as a **generic technique**, and so is every row of the improvement leaderboard. When you report a kept iteration, the category name must be reusable verbatim by the next site: no product or component proper nouns, no file or module names, no byte sizes, no CSS class names, and no process footnotes like "(re-test after landscape change)". Site-specific detail goes in the description.
+Everything in this catalog is named as a **generic technique**, and so is every row of the improvement leaderboard — both its name and the line under it. When you report a kept iteration, the category name and its description must be reusable verbatim by the next site: no product or component proper nouns, no file or module names, no byte sizes, no CSS class names, no route paths, no process footnotes like "(re-test after landscape change)", and no changelog voice ("Added…", "…was fetched…"). Site-specific detail goes in `iterations[].notes`, which stays on your machine.
 
 | bad | good |
 |---|---|
-| `Inline the Shared Stylesheet (re-test After Landscape Change)` | `Inline shared stylesheets` |
-| `Lazy-load Chat Side-pane Components` | `Lazy-load components` |
-| `Lazy-load Hidden 262KB Changelog Rocket.gif` | `Lazy-load unseen images` |
-| `Import highlight.js/lib/common` | `Subset syntax-highlighter bundle` |
-| `Playfair Display 4 Weights → 1` | `Reduce font payload` |
+| **name** `Inline the Shared Stylesheet (re-test After Landscape Change)` | `Inline shared stylesheets` |
+| **name** `Lazy-load Chat Side-pane Components` | `Lazy-load components` |
+| **name** `Lazy-load Hidden 262KB Changelog Rocket.gif` | `Lazy-load unseen images` |
+| **name** `Import highlight.js/lib/common` | `Subset syntax-highlighter bundle` |
+| **name** `Playfair Display 4 Weights → 1` | `Reduce font payload` |
+| **description** `Playfair Display cut from 4 weights x 2 styles to the single 400-italic actually used` | `Ship only the font weights and styles the page actually paints, and avoid preloading fonts that are unused on the entry route.` |
+| **description** `Removed a manualChunks pin that hoisted the ~170KB-gzip mermaid-to-excalidraw chunk onto the boot path` | `Keep heavy optional libraries off the boot path by importing them only from the UI that needs them.` |
 
-One technique, one bucket — do not create a category per component, image, or vendor. The full rule, including how it interacts with `results.json`, is in [`packages/skill/SKILL.md`](https://github.com/jjcm/makefaster/blob/main/packages/skill/SKILL.md#naming-an-improvement--generic-techniques-only).
+One technique, one bucket — do not create a category per component, image, or vendor. The full rule, including how it interacts with `results.json`, is in [`packages/skill/SKILL.md`](https://github.com/jjcm/makefaster/blob/main/packages/skill/SKILL.md#naming-and-describing-an-improvement--generic-techniques-only).
 
 ---
 
