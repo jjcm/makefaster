@@ -75,8 +75,10 @@ func DefaultFaviconForURL(host string) string {
 func UpsertSite(existing *SiteRow, submission SiteSubmission, now time.Time) SiteRow {
 	row := SiteRow{
 		URL:        submission.URL,
+		LCPBefore:  submission.LCPBefore,
 		LCPRaw:     submission.LCPRaw,
 		LCPDelta:   submission.LCPDelta,
+		TTIBefore:  submission.TTIBefore,
 		TTIRaw:     submission.TTIRaw,
 		TTIDelta:   submission.TTIDelta,
 		Mode:       submission.Mode,

@@ -56,8 +56,10 @@ function modePayload(results, mode, siteUrl) {
   return {
     url: siteUrl,
     mode,
+    lcpBefore: Math.round(baseline.lcpMs),
     lcpRaw: Math.round(final.lcpMs),
     lcpDelta,
+    ttiBefore: Math.round(baseline.ttiMs),
     ttiRaw: Math.round(final.ttiMs),
     ttiDelta,
     ...(results?.site?.name ? { name: results.site.name } : {}),
@@ -67,8 +69,10 @@ function modePayload(results, mode, siteUrl) {
 
 /**
  * One submit-site payload per mode that has complete baseline+final numbers.
- * Deltas are computed here (percent vs. baseline, negative = faster) so the
- * skill only ever reports raw measurements.
+ * Both ends of the run are sent — `lcpBefore`/`ttiBefore` are the measured
+ * baseline, `lcpRaw`/`ttiRaw` the measurement after the last kept change — and
+ * the deltas between them are computed here (percent vs. baseline, negative =
+ * faster) so the skill only ever reports raw measurements.
  */
 export function buildSitePayloads(results, siteUrl) {
   return ["cold", "warm"]

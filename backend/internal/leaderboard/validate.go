@@ -96,11 +96,31 @@ func isHTTPURL(field any) bool {
 	return parsed.Scheme == "https" || parsed.Scheme == "http"
 }
 
+// BaselineFromDelta recovers the pre-loop measurement a submission was
+// compared against. The delta is the percent change from baseline to the
+// measured value, so baseline = measured / (1 + delta/100).
+//
+// A delta of -100% or worse leaves nothing to divide by — that is a claim of
+// infinite speedup, not a baseline — so the measured value is returned
+// unchanged and the row reads as no recorded improvement. Nothing here
+// invents a number the submitter did not imply.
+func BaselineFromDelta(measured int, deltaPct float64) int {
+	ratio := 1 + deltaPct/100
+	if ratio <= 0 {
+		return measured
+	}
+	return int(jsRound(float64(measured) / ratio))
+}
+
 // ValidateSitePayload checks a POST /api/submit-site body:
 //
-//	{ url, favicon?, name?, lcpRaw, lcpDelta, ttiRaw, ttiDelta, mode: cold|warm }
+//	{ url, favicon?, name?, lcpBefore?, lcpRaw, lcpDelta,
+//	  ttiBefore?, ttiRaw, ttiDelta, mode: cold|warm }
 //
-// Deltas are percentages vs. the pre-loop baseline; negative = faster.
+// lcpRaw/ttiRaw are the measurement after the loop and the deltas are
+// percentages vs. the pre-loop baseline, negative = faster. lcpBefore/ttiBefore
+// are that baseline; a client that does not send them (every CLI before this
+// field existed) has it recovered from the delta.
 func ValidateSitePayload(body map[string]any) (SiteSubmission, error) {
 	var errors []string
 
@@ -126,6 +146,17 @@ func ValidateSitePayload(body map[string]any) (SiteSubmission, error) {
 	}
 	if !finiteInRange(body["ttiDelta"], deltaPctMin, deltaPctMax) {
 		errors = append(errors, fmt.Sprintf("ttiDelta must be a percentage between %d and %d (negative = faster)", deltaPctMin, deltaPctMax))
+	}
+
+	lcpBefore, lcpBeforeExists := body["lcpBefore"]
+	lcpBeforeGiven := present(lcpBefore, lcpBeforeExists)
+	if lcpBeforeGiven && !finiteInRange(lcpBefore, 0, rawMsMax) {
+		errors = append(errors, fmt.Sprintf("lcpBefore must be a number of ms between 0 and %d when provided", rawMsMax))
+	}
+	ttiBefore, ttiBeforeExists := body["ttiBefore"]
+	ttiBeforeGiven := present(ttiBefore, ttiBeforeExists)
+	if ttiBeforeGiven && !finiteInRange(ttiBefore, 0, rawMsMax) {
+		errors = append(errors, fmt.Sprintf("ttiBefore must be a number of ms between 0 and %d when provided", rawMsMax))
 	}
 
 	favicon, faviconExists := body["favicon"]
@@ -154,6 +185,16 @@ func ValidateSitePayload(body map[string]any) (SiteSubmission, error) {
 		LCPDelta: roundPct(lcpDelta),
 		TTIRaw:   int(jsRound(ttiRaw)),
 		TTIDelta: roundPct(ttiDelta),
+	}
+	submission.LCPBefore = BaselineFromDelta(submission.LCPRaw, submission.LCPDelta)
+	if lcpBeforeGiven {
+		value, _ := numberValue(lcpBefore)
+		submission.LCPBefore = int(jsRound(value))
+	}
+	submission.TTIBefore = BaselineFromDelta(submission.TTIRaw, submission.TTIDelta)
+	if ttiBeforeGiven {
+		value, _ := numberValue(ttiBefore)
+		submission.TTIBefore = int(jsRound(value))
 	}
 	if faviconString, ok := favicon.(string); ok && faviconString != "" {
 		submission.Favicon = faviconString

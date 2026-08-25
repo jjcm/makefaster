@@ -226,6 +226,64 @@ func TestRenameMigrationFoldsTheLiveBoardOntoGenericNames(t *testing.T) {
 	}
 }
 
+// Site rows written before the board stored both ends of a run only carry the
+// after value and the percent change. The migration has to recover the
+// baseline from those two, because that is the only relationship the data
+// records — nothing may be invented.
+func TestBeforeMetricsMigrationBackfillsFromTheRecordedDelta(t *testing.T) {
+	pool := databaseAtVersion(t, 2)
+
+	// Written the way the pre-migration schema stored them.
+	rows := []struct {
+		url                string
+		lcpRaw             int
+		lcpDelta, ttiDelta float64
+		ttiRaw             int
+	}{
+		{"excalidraw.com", 1202, -82, -20.8, 5325},
+		{"roadmap.sh", 908, -82.3, -77.7, 1200},
+		{"dave.com", 906, 0.4, 0.4, 906},
+	}
+	for _, row := range rows {
+		if _, err := pool.Exec(`
+			INSERT INTO sites (name, url, favicon, lcp_raw, lcp_delta, tti_raw, tti_delta, mode, tests, measured_at)
+			VALUES (?, ?, '', ?, ?, ?, ?, 'cold', 1, NOW())`,
+			row.url, row.url, row.lcpRaw, row.lcpDelta, row.ttiRaw, row.ttiDelta); err != nil {
+			t.Fatalf("insert %s: %v", row.url, err)
+		}
+	}
+
+	if err := db.Migrate(pool, migrationsDir); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	stored, err := store.New(pool).Sites(context.Background())
+	if err != nil {
+		t.Fatalf("read sites: %v", err)
+	}
+	byURL := make(map[string]leaderboard.SiteRow, len(stored))
+	for _, row := range stored {
+		byURL[row.URL] = row
+	}
+
+	for _, row := range rows {
+		got, found := byURL[row.url]
+		if !found {
+			t.Errorf("%s is missing after the migration", row.url)
+			continue
+		}
+		if want := leaderboard.BaselineFromDelta(row.lcpRaw, row.lcpDelta); got.LCPBefore != want {
+			t.Errorf("%s lcpBefore: got %d, want %d", row.url, got.LCPBefore, want)
+		}
+		if want := leaderboard.BaselineFromDelta(row.ttiRaw, row.ttiDelta); got.TTIBefore != want {
+			t.Errorf("%s ttiBefore: got %d, want %d", row.url, got.TTIBefore, want)
+		}
+		if got.LCPRaw != row.lcpRaw || got.TTIRaw != row.ttiRaw {
+			t.Errorf("%s lost its after values: %+v", row.url, got)
+		}
+	}
+}
+
 // Running the rename against a board that holds nothing to rename must be a
 // no-op, which is what every fresh deploy and every already-migrated database
 // will do.

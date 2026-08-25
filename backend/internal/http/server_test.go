@@ -350,6 +350,70 @@ func TestSubmitSiteInsertsThenUpsertsAndSurvivesRestart(t *testing.T) {
 	}
 }
 
+// The site board shows before and after for both metrics, so both have to
+// survive a round trip — including for a client that only sends the after
+// value and the delta, which is every CLI released before lcpBefore existed.
+func TestSubmitSiteStoresBothEndsOfEachMetric(t *testing.T) {
+	base := boot(t, freshDatabase(t)).URL
+
+	var measured struct {
+		Row leaderboard.SiteRow `json:"row"`
+	}
+	body := `{"url":"https://both.example.com","mode":"cold",
+		"lcpBefore":6678,"lcpRaw":1202,"lcpDelta":-82,
+		"ttiBefore":6723,"ttiRaw":5325,"ttiDelta":-20.8}`
+	if status := postJSON(t, base+"/api/submit-site", body, &measured); status != http.StatusCreated {
+		t.Fatalf("submit = %d, want 201", status)
+	}
+	if measured.Row.LCPBefore != 6678 || measured.Row.LCPRaw != 1202 {
+		t.Errorf("LCP: got before=%d after=%d, want 6678/1202", measured.Row.LCPBefore, measured.Row.LCPRaw)
+	}
+	if measured.Row.TTIBefore != 6723 || measured.Row.TTIRaw != 5325 {
+		t.Errorf("TTI: got before=%d after=%d, want 6723/5325", measured.Row.TTIBefore, measured.Row.TTIRaw)
+	}
+
+	var derived struct {
+		Row leaderboard.SiteRow `json:"row"`
+	}
+	legacy := `{"url":"https://legacy.example.com","mode":"cold","lcpRaw":1202,"lcpDelta":-82,"ttiRaw":5325,"ttiDelta":-20.8}`
+	if status := postJSON(t, base+"/api/submit-site", legacy, &derived); status != http.StatusCreated {
+		t.Fatalf("legacy submit = %d, want 201", status)
+	}
+	if derived.Row.LCPBefore != leaderboard.BaselineFromDelta(1202, -82) {
+		t.Errorf("lcpBefore should be recovered from the delta, got %d", derived.Row.LCPBefore)
+	}
+	if derived.Row.TTIBefore != leaderboard.BaselineFromDelta(5325, -20.8) {
+		t.Errorf("ttiBefore should be recovered from the delta, got %d", derived.Row.TTIBefore)
+	}
+
+	// And both are on the board the SPA reads, not just in the write response.
+	var rows []leaderboard.SiteRow
+	getJSON(t, base+"/data/sites.json", &rows)
+	found := false
+	for _, row := range rows {
+		if row.URL == "both.example.com" {
+			found = true
+			if row.LCPBefore != 6678 || row.TTIBefore != 6723 {
+				t.Errorf("GET /data/sites.json lost the baselines: %+v", row)
+			}
+		}
+	}
+	if !found {
+		t.Error("the submitted row is missing from the site board")
+	}
+
+	var rejected struct {
+		Errors []string `json:"errors"`
+	}
+	bad := `{"url":"https://both.example.com","mode":"cold","lcpBefore":-5,"lcpRaw":1202,"lcpDelta":-82,"ttiRaw":5325,"ttiDelta":-20.8}`
+	if status := postJSON(t, base+"/api/submit-site", bad, &rejected); status != http.StatusBadRequest {
+		t.Fatalf("negative lcpBefore = %d, want 400", status)
+	}
+	if !strings.Contains(strings.Join(rejected.Errors, " "), "lcpBefore") {
+		t.Errorf("expected an lcpBefore error, got %+v", rejected.Errors)
+	}
+}
+
 func TestSubmitImprovementsFoldsMatchesAndCreatesNovelCategories(t *testing.T) {
 	pool := freshDatabase(t)
 	base := boot(t, pool).URL
