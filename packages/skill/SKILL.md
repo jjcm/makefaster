@@ -84,6 +84,11 @@ The dashboard adds the measured numbers itself, straight from `results.json`, so
 you do not need to report them twice — but a `[RESULT]` line of your own is
 welcome and is what a reader looks for.
 
+It can only do that if the numbers are in the file. A `[RESULT]` line is a
+sentence in a log: nothing reads it for a value, and no chart moves because of
+it. Writing the deltas here and not into `results.json` leaves the user watching
+a run whose log fills up while every number stays on the baseline.
+
 ## Step 0 — get the site running
 
 Work out how this site is served (README, `package.json` scripts, Makefile,
@@ -178,6 +183,41 @@ where it leads instead of following.
 **Update `results.json` and `state.json` after every iteration.** Keep
 `results.json` valid JSON at all times — the CLI parses it the moment you exit,
 even if you were interrupted.
+
+### Every measurement is a row with numbers in it
+
+`results.json` is the only source of numbers the dashboard has. Your
+`[RESULT]` line is prose in a log — the CLI cannot chart it, and will not try.
+So **the moment a `[TEST]` finishes, rewrite `results.json`** with the row that
+test produced:
+
+- a **generic `name`** (never blank), `description`, `category`, `notes`;
+- **`deltaMs` and `deltaPct`** — the measured north-star change against the
+  previous kept state, negative when the site got faster;
+- **`measured`** — the absolute medians that run produced, per mode, in the same
+  shape as `baseline`. This is what makes the row plottable even if a delta is
+  wrong or missing;
+- **`kept`** — `true` or `false`, never absent;
+- **`generic`** on every keep.
+
+Then, on a keep, **also refresh `results.final`** for the modes you measured so
+the candidate column tracks the site as it stands now. `final` is re-measured
+properly one last time before you exit, but leaving it at the baseline all run
+tells the user that nothing has worked yet.
+
+Two rules this exists to prevent, both of which silently freeze the user's
+dashboard on the baseline for the whole session:
+
+- **Never append a row with no numbers on it** — no `{"kept": true}` stubs, no
+  unnamed rows, no "I will fill in the deltas later". A row with neither a delta
+  nor an absolute is not a result, and the CLI treats it as one that has not
+  happened yet: no bar, no verdict, no `[RESULT]` line.
+- **A miss is a row too.** Every non-skipped test gets one, kept or reverted —
+  you profiled the reverted experiment just as carefully, and its bar is how the
+  user sees that the loop is working rather than stalled.
+
+A **`[SKIP]` is not a test**: it costs no measurement, so it gets no row in
+`iterations[]` and no bar. Report it and move on.
 
 ## Naming and describing an improvement — generic techniques only
 
@@ -405,6 +445,7 @@ milliseconds. Deltas are negative when the site got faster.
       "category": "Inline Critical CSS",
       "notes": "Extracted the 4.1KB of rules the hero uses out of app.css into <style> in index.html",
       "generic": true,
+      "measured": { "cold": { "lcpMs": 2140, "ttiMs": 3700 } },
       "deltaMs": -260,
       "deltaPct": -10.8,
       "kept": true
@@ -416,6 +457,7 @@ milliseconds. Deltas are negative when the site got faster.
       "category": null,
       "notes": "The session spinner blocked the homepage until the feature-flag SDK resolved",
       "generic": false,
+      "measured": { "cold": { "lcpMs": 1730, "ttiMs": 3200 } },
       "deltaMs": -410,
       "deltaPct": -14.2,
       "kept": true
@@ -426,6 +468,7 @@ milliseconds. Deltas are negative when the site got faster.
       "description": "Preload the image the largest contentful paint waits on",
       "category": "Preload LCP Image",
       "notes": "Added <link rel=preload> for the first 8 grid thumbnails; LCP regressed, reverted",
+      "measured": { "cold": { "lcpMs": 1880, "ttiMs": 3350 } },
       "deltaMs": 150,
       "deltaPct": 6.2,
       "kept": false
@@ -457,7 +500,13 @@ Field notes:
   leaderboard), `fcpMs` / `tbtMs` / `cls` / `score` (0-100 performance score)
   are welcome extras — the CLI's live dashboard shows a row per metric you
   supply and omits the rest. `final` for a mode is the last full measurement
-  pass, re-run after the last kept change.
+  pass, re-run after the last kept change — refresh it after every keep as you
+  go, and re-measure it properly before you exit.
+- `iterations[].measured` — the absolute medians that iteration's test produced,
+  per mode, in the same shape as `baseline`. Required on every measured
+  iteration: the deltas say how far the site moved, and this says where it
+  landed, which is what the dashboard plots. It is recorded for reverts too —
+  the number was measured before you put the code back.
 - `iterations[].category` — the checklist category name this corresponds to,
   or `null` when it is genuinely novel (the server will embed the name +
   description and either fold it into the closest category or create a new
@@ -481,6 +530,8 @@ Field notes:
   submitted to the improvement leaderboard. Reverts can omit it.
 - `iterations[].deltaMs` / `deltaPct` — measured north-star change for that
   single iteration (median vs. the previous kept state), negative = faster.
+  Required on every measured iteration, kept or reverted. An iteration with
+  neither these nor `measured` is a stub, not a result, and is ignored.
 - `genericKeepPct` / `siteSpecificKeepPct` — the split above, over kept
   iterations only, as whole percents that add to 100. Submitted with the site
   stats. Leave both out when the run kept nothing.
