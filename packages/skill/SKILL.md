@@ -95,6 +95,64 @@ One hypothesis per iteration, no exceptions:
    `results.json` valid JSON at all times — the CLI parses it the moment you
    exit, even if you were interrupted.
 
+## Naming an improvement — generic techniques only
+
+**Hard rule: every `iterations[].category` (and the `name` you submit with it)
+is the name of a GENERIC TECHNIQUE that could apply to any site.** The
+improvement leaderboard is a shared catalog of techniques, not a changelog of
+your repo. A name that only makes sense to someone who has read your source
+tree is a bad name.
+
+A category name must never contain:
+
+- **product or component proper nouns** — `Mermaid`, `Firebase`, `Amplitude`,
+  `ChatControls`, `AppInitPage`;
+- **file or module names** — `rocket.gif`, `highlight.js/lib/common`,
+  `moment-timezone`, `basic_examples`;
+- **byte sizes, versions, or counts** — `262KB`, `4 weights`, `v3.2`;
+- **CSS class names, route paths, or API paths**;
+- **process footnotes** — `(re-test after landscape change)`,
+  `(same as iteration 4)`, `(second attempt)`.
+
+Put every one of those in the **description** instead. The description is
+where the site-specific detail belongs; the **name must be reusable by the
+next site.**
+
+| bad (site-specific) | good (generic technique) |
+|---|---|
+| `Inline the Shared Stylesheet (re-test After Landscape Change)` | `Inline shared stylesheets` |
+| `Lazy-load Chat Side-pane Components` | `Lazy-load components` |
+| `Lazy-load Hidden 262KB Changelog Rocket.gif` | `Lazy-load unseen images` |
+| `Gzip-precompressed static assets` | `Precompress static assets` |
+| `Enable Gzip Text Compression on the Production Server` | `Enable gzip` |
+| `Import highlight.js/lib/common` | `Subset syntax-highlighter bundle` (or fold into `Reduce unused JS`) |
+| `Playfair Display 4 Weights → 1` | `Reduce font payload` |
+| `Remove Duplicate 1MB Basic_examples Fetch` | `Skip redundant fetches` |
+
+Do **not** invent a category per component type. `Lazy-load Chat Side-pane
+Components`, `Lazy-load the Settings Modal`, and `Lazy-load the JSON Editor`
+are all one technique: **`Lazy-load components`**. The same goes for images,
+third-party SDKs, analytics, and data fetches — one bucket each, not one row
+per widget.
+
+When writing `results.json`:
+
+1. **Prefer an existing checklist category name** from
+   `.makefaster/improvements.json` whenever one fits. Reuse is the point: it is
+   what makes `count` on the public board mean anything.
+2. **Only invent a new category when the technique is genuinely novel** — and
+   even then the name must still be generic. If you cannot phrase it so another
+   site could use it verbatim, it is not a category, it is a description.
+3. Leave `category` as `null` if nothing fits and you cannot phrase a generic
+   name; the server will fold the submission by similarity rather than let a
+   one-off name onto the board.
+
+The server enforces this on ingest too — it strips parentheticals, file names,
+byte sizes, and identifiers out of submitted names, and folds the `lazy-load X`
+family into a small fixed set of buckets — so a site-specific name does not
+create a site-specific row. Write the generic name yourself anyway; the
+normalizer is a backstop, not a naming service.
+
 ## Step 3 — the stop rule
 
 When `missStreak` reaches `maxMisses` (default **5**) consecutive attempts
@@ -191,7 +249,11 @@ Field notes:
 - `iterations[].category` — the checklist category name this corresponds to,
   or `null` when it is genuinely novel (the server will embed the name +
   description and either fold it into the closest category or create a new
-  one on the improvement leaderboard).
+  one on the improvement leaderboard). It must be a **generic technique
+  name** — see "Naming an improvement" above; site-specific names are the one
+  thing that makes this board useless.
+- `iterations[].name` — a short generic label for what you did, under the same
+  naming rule as `category`. Everything site-specific goes in `description`.
 - `iterations[].deltaMs` / `deltaPct` — measured north-star change for that
   single iteration (median vs. the previous kept state), negative = faster.
 - `missStreak` — mirror of the counter in `state.json` at exit time.
