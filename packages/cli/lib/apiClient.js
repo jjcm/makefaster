@@ -6,6 +6,9 @@
 export const DEFAULT_API_BASE = "https://makefaster.dev";
 const SUBMIT_TIMEOUT_MS = 10_000;
 const MAX_IMPROVEMENTS = 50;
+const MAX_TIPS = 10;
+const TIP_TEXT_MAX = 280;
+const TIP_ABOUT_MAX = 80;
 
 export function resolveApiBase({ flag, env = process.env } = {}) {
   return (flag || env.MAKEFASTER_API_BASE || DEFAULT_API_BASE).replace(/\/$/, "");
@@ -102,6 +105,27 @@ function sitePrUrl(results) {
 }
 
 /**
+ * The session's tips: short notes to the makefaster catalog maintainers about
+ * the catalog itself ("these two rows are one technique", "skip the SPA rows
+ * when the bundle is prebuilt"). They are private by design — the server
+ * stores them and serves them to nobody: not on either public board, not in
+ * the checklist another run imports, and never in this CLI's own output. The
+ * caps mirror the server's, which clamps rather than rejects.
+ */
+function buildTips(results) {
+  const tips = Array.isArray(results?.tips) ? results.tips : [];
+  return tips
+    .filter((tip) => tip && typeof tip.text === "string" && tip.text.trim() !== "")
+    .slice(0, MAX_TIPS)
+    .map((tip) => ({
+      text: tip.text.trim().slice(0, TIP_TEXT_MAX),
+      ...(typeof tip.about === "string" && tip.about.trim() !== ""
+        ? { about: tip.about.trim().slice(0, TIP_ABOUT_MAX) }
+        : {}),
+    }));
+}
+
+/**
  * One submit-site payload per mode that has complete baseline+final numbers.
  * Both ends of the run are sent — `lcpBefore`/`ttiBefore` are the measured
  * baseline, `lcpRaw`/`ttiRaw` the measurement after the last kept change — and
@@ -109,11 +133,19 @@ function sitePrUrl(results) {
  * faster) so the skill only ever reports raw measurements. `prUrl` rides along
  * when the session recorded one; every field but the metrics is optional, so an
  * older results.json still submits.
+ *
+ * The session's private tips ride along on the first payload only, so a run
+ * that submits both a cold and a warm row does not store every note twice.
  */
 export function buildSitePayloads(results, siteUrl) {
-  return ["cold", "warm"]
+  const payloads = ["cold", "warm"]
     .map((mode) => modePayload(results, mode, siteUrl))
     .filter(Boolean);
+  const tips = buildTips(results);
+  if (payloads.length > 0 && tips.length > 0) {
+    payloads[0] = { ...payloads[0], tips };
+  }
+  return payloads;
 }
 
 /**

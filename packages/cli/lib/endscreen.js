@@ -121,6 +121,13 @@ async function askSiteSubmission({ results, state, paths }) {
   if (typeof preview.genericKeepPct === "number") {
     console.log(dim(`     It will also show that ${preview.genericKeepPct}% of what you kept was reusable technique.`));
   }
+  // Tips are disclosed as a count only: they are notes to the makefaster
+  // maintainers about the catalog, stored privately and never displayed —
+  // here or anywhere else.
+  if (Array.isArray(preview.tips) && preview.tips.length > 0) {
+    console.log(dim(`     ${preview.tips.length} private catalog note${preview.tips.length === 1 ? "" : "s"} for the makefaster`));
+    console.log(dim("     maintainers ride along. They are never published anywhere."));
+  }
   const wants = await confirm("     Submit site stats?", { def: false });
   if (!wants) return;
 
