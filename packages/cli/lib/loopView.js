@@ -17,6 +17,7 @@
  * it in the panel drowned the two lines a reader actually wanted.
  */
 
+import { measuredIterations } from "./dashboard.js";
 import { watchResults } from "./resultsWatch.js";
 import { watchStepLog } from "./stepLog.js";
 
@@ -49,7 +50,10 @@ export function createLoopView({ tui, paths, state, provider, model, now = () =>
   let results = null;
   let updatedAt = null;
   let status = "RUNNING";
-  let seenIterations = 0;
+  // Keyed by position in `iterations`, not by how many have been seen: an agent
+  // that writes the row first and fills in the numbers on the next write must
+  // still get its one RESULT line when the numbers land.
+  const announced = new Set();
   let announcedBaseline = false;
   let eventCount = 0;
   let lastLabel = null;
@@ -82,23 +86,26 @@ export function createLoopView({ tui, paths, state, provider, model, now = () =>
       append("TEST", `Baseline measured (${mode})${Number.isFinite(lcp) ? `: LCP ${Math.round(lcp)}ms` : ""}`);
     }
 
-    const iterations = Array.isArray(next?.iterations) ? next.iterations : [];
-    for (const iteration of iterations.slice(seenIterations)) {
-      // One line per iteration, and it names the experiment: the agent has
-      // usually already reported `[TRY] <name>`, so repeating that would be a
-      // second row saying nothing new — but this line still stands alone for an
-      // agent that reports nothing at all.
+    // One line per measured iteration, and it names the experiment: the agent
+    // has usually already reported `[TRY] <name>`, so repeating that would be a
+    // second row saying nothing new — but this line still stands alone for an
+    // agent that reports nothing at all.
+    //
+    // Only measured iterations. A row with no numbers on it has not produced a
+    // result yet, and announcing one as `no delta recorded — reverted` reports a
+    // miss the agent never measured.
+    const star = next?.northStar || "lcp";
+    for (const entry of measuredIterations(next)) {
+      if (announced.has(entry.position)) continue;
+      announced.add(entry.position);
       const parts = [
-        Number.isFinite(iteration?.deltaMs) ? signedMs(iteration.deltaMs) : null,
-        Number.isFinite(iteration?.deltaPct) ? signedPct(iteration.deltaPct) : null,
+        Number.isFinite(entry.deltaMs) ? signedMs(entry.deltaMs) : null,
+        Number.isFinite(entry.deltaPct) ? signedPct(entry.deltaPct) : null,
       ].filter(Boolean);
-      const measured = parts.length > 0
-        ? `${parts.join(" / ")} on ${next?.northStar || "lcp"}`
-        : "no delta recorded";
-      const verdict = iteration?.kept === true ? "kept" : "reverted, did not beat the noise floor";
-      append("RESULT", `${iteration?.name || "Unnamed experiment"}: ${measured} — ${verdict}`);
+      const measured = parts.length > 0 ? `${parts.join(" / ")} on ${star}` : `${star} ${Math.round(entry.value)}ms`;
+      const verdict = entry.kept ? "kept" : "reverted, did not beat the noise floor";
+      append("RESULT", `${entry.name}: ${measured} — ${verdict}`);
     }
-    seenIterations = iterations.length;
     render();
   }
 

@@ -197,6 +197,50 @@ test("a new results.json iteration produces exactly one RESULT line", () => {
   view.stop();
 });
 
+// `Unnamed experiment: no delta recorded — reverted` was the panel reporting a
+// miss the agent never measured, off a row it had not filled in yet.
+test("a row with no numbers on it is not reported as a result", () => {
+  const paths = session();
+  paths.write({ version: 1, northStar: "lcp", baseline: { warm: { lcpMs: 4658 } }, iterations: [] });
+  const { view } = harness(paths);
+
+  paths.write({
+    version: 1, northStar: "lcp",
+    baseline: { warm: { lcpMs: 4658 } },
+    iterations: [{ kept: true }],
+  });
+  view.flush();
+  assert.deepEqual(view.log.filter((e) => e.tag === "RESULT"), []);
+
+  // The same row, once the measurement lands, is a result — announced once.
+  paths.write({
+    version: 1, northStar: "lcp",
+    baseline: { warm: { lcpMs: 4658 } },
+    iterations: [{ n: 1, name: "Defer non-critical scripts", deltaMs: -1050, deltaPct: -22.5, kept: true }],
+  });
+  view.flush();
+  view.flush();
+  assert.deepEqual(view.log.filter((e) => e.tag === "RESULT").map((e) => e.text), [
+    "Defer non-critical scripts: -1050ms / -22.5% on lcp — kept",
+  ]);
+  view.stop();
+});
+
+test("an iteration that reports only where it landed still gets its RESULT line", () => {
+  const paths = session();
+  paths.write({
+    version: 1, northStar: "lcp",
+    baseline: { warm: { lcpMs: 4658 } },
+    iterations: [{ n: 1, name: "Defer non-critical scripts", kept: true, measured: { warm: { lcpMs: 3608 } } }],
+  });
+  const { view } = harness(paths);
+
+  assert.deepEqual(view.log.filter((e) => e.tag === "RESULT").map((e) => e.text), [
+    "Defer non-critical scripts: -1050ms / -22.5% on lcp — kept",
+  ]);
+  view.stop();
+});
+
 test("setStatus is reflected in the next frame", () => {
   const paths = session();
   const { view, last } = harness(paths);
