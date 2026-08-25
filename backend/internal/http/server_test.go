@@ -415,9 +415,16 @@ func TestSubmitImprovementsFoldsMatchesAndCreatesNovelCategories(t *testing.T) {
 	if created.Count != 1 {
 		t.Errorf("created count: got %d, want 1", created.Count)
 	}
-	// A -33% average is the biggest improvement on the board.
-	if created.Rank != 1 {
-		t.Errorf("created rank: got %d, want 1", created.Rank)
+	// The board ranks by times improved, so a brand new category with one
+	// sighting sits below the seeded one it was submitted alongside, however
+	// big its single measurement was.
+	if created.Rank != 2 {
+		t.Errorf("created rank: got %d, want 2", created.Rank)
+	}
+	for i := range after {
+		if after[i].Name == "Image Optimization" && after[i].Rank != 1 {
+			t.Errorf("the most-improved category should rank 1, got %d", after[i].Rank)
+		}
 	}
 
 	// The board survives a restart, which is the whole point of moving off the

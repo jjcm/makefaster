@@ -178,7 +178,10 @@ func TestMissingDeltaMsLeavesThatAverageAlone(t *testing.T) {
 	}
 }
 
-func TestRerankCategoriesOrdersByAveragePct(t *testing.T) {
+// The default order is times improved, count descending: how often a
+// technique has worked matters more than how well it worked once. Average
+// improvement only breaks a tie, and the name settles the rest.
+func TestRerankCategoriesOrdersByTimesImproved(t *testing.T) {
 	categories := []leaderboard.Category{
 		{Name: "B", AvgImprovementPct: -5, Count: 10},
 		{Name: "A", AvgImprovementPct: -20, Count: 1},
@@ -186,13 +189,136 @@ func TestRerankCategoriesOrdersByAveragePct(t *testing.T) {
 	}
 	leaderboard.RerankCategories(categories)
 
-	for i, expected := range []string{"A", "C", "B"} {
+	for i, expected := range []string{"C", "B", "A"} {
 		if categories[i].Name != expected {
 			t.Fatalf("position %d: got %q, want %q", i, categories[i].Name, expected)
 		}
 		if categories[i].Rank != i+1 {
 			t.Errorf("rank at position %d: got %d, want %d", i, categories[i].Rank, i+1)
 		}
+	}
+}
+
+func TestRerankCategoriesBreaksTiesOnImprovementThenName(t *testing.T) {
+	categories := []leaderboard.Category{
+		{Name: "Zebra", AvgImprovementPct: -4, Count: 7},
+		{Name: "Alpha", AvgImprovementPct: -4, Count: 7},
+		{Name: "Middle", AvgImprovementPct: -9, Count: 7},
+	}
+	leaderboard.RerankCategories(categories)
+
+	for i, expected := range []string{"Middle", "Alpha", "Zebra"} {
+		if categories[i].Name != expected {
+			t.Fatalf("position %d: got %q, want %q", i, categories[i].Name, expected)
+		}
+	}
+}
+
+// The disease this replaced: a row per widget. Five submissions that are all
+// "lazy-load one thing on my site" must land on one row, and the row must be
+// named after the technique.
+func TestSiteSpecificLazyLoadSubmissionsShareOneCategory(t *testing.T) {
+	categories := fixtureCategories(t)
+	embedder, threshold := localEmbedder()
+	before := findCategory(t, categories, "Lazy-Load Components")
+
+	submitted := []leaderboard.Improvement{
+		{Name: "Lazy-load Chat Side-pane Components", Description: "Dynamically import Overview, FileNav and CallOverlay in the chat controls",
+			DeltaMs: -222, HasDeltaMs: true, DeltaPct: -6.7, HasDeltaPct: true},
+		{Name: "Lazy-load Mermaid Runtime", Description: "The mermaid-to-excalidraw chunk is no longer on the boot critical path",
+			DeltaMs: -613, HasDeltaMs: true, DeltaPct: -9.6, HasDeltaPct: true},
+		{Name: "Lazy-load the Settings Modal", Description: "The settings modal and its form library load when opened",
+			DeltaMs: -100, HasDeltaMs: true, DeltaPct: -2.9, HasDeltaPct: true},
+	}
+	updated, results := leaderboard.Categorize(submitted, categories, embedder, threshold)
+
+	for i, result := range results {
+		if result.Category != "Lazy-Load Components" {
+			t.Errorf("results[%d] (%q) landed on %q, want %q", i, result.Input, result.Category, "Lazy-Load Components")
+		}
+		if result.Action != "matched" {
+			t.Errorf("%q should fold into the existing bucket, got %q", result.Input, result.Action)
+		}
+	}
+	if len(updated) != len(categories) {
+		t.Fatalf("three lazy-load submissions created %d categories, want 0", len(updated)-len(categories))
+	}
+
+	after := findCategory(t, updated, "Lazy-Load Components")
+	if after.Count != before.Count+len(submitted) {
+		t.Errorf("count: got %d, want %d", after.Count, before.Count+len(submitted))
+	}
+	expectedMs, expectedPct := foldAll(before, submitted)
+	if after.AvgImprovementMs != expectedMs {
+		t.Errorf("avgImprovementMs: got %d, want %d", after.AvgImprovementMs, expectedMs)
+	}
+	if after.AvgImprovementPct != expectedPct {
+		t.Errorf("avgImprovementPct: got %v, want %v", after.AvgImprovementPct, expectedPct)
+	}
+}
+
+// foldAll mirrors the running-average fold the leaderboard applies, so a test
+// can predict where a series of submissions lands without hardcoding it.
+func foldAll(start leaderboard.Category, improvements []leaderboard.Improvement) (int, float64) {
+	count := float64(start.Count)
+	ms, pct := float64(start.AvgImprovementMs), start.AvgImprovementPct
+	for _, improvement := range improvements {
+		if improvement.HasDeltaMs {
+			ms = math.Floor((ms*count+improvement.DeltaMs)/(count+1) + 0.5)
+		}
+		if improvement.HasDeltaPct {
+			pct = math.Floor((pct*count+improvement.DeltaPct)/(count+1)*10+0.5) / 10
+		}
+		count++
+	}
+	return int(ms), pct
+}
+
+// Jacob's three examples, end to end through ingest.
+func TestSubmittedNamesAreStoredAsGenericTechniques(t *testing.T) {
+	categories := fixtureCategories(t)
+	embedder, threshold := localEmbedder()
+
+	_, results := leaderboard.Categorize([]leaderboard.Improvement{
+		{Name: "Inline the Shared Stylesheet (re-test After Landscape Change)",
+			Description: "build.inlineStylesheets:'always' removes both render-blocking CSS requests",
+			DeltaPct:    -9.4, HasDeltaPct: true},
+		{Name: "Lazy-load Hidden 262KB Changelog Rocket.gif",
+			Description: "A 512x512 262KB animated GIF was eagerly fetched to paint a 48x48 decoration",
+			DeltaPct:    -47.3, HasDeltaPct: true},
+		{Name: "Lazy-load Chat Side-pane Components",
+			Description: "Dynamically import the chat side-pane tabs only when opened",
+			DeltaPct:    -6.7, HasDeltaPct: true},
+	}, categories, embedder, threshold)
+
+	expected := []string{"Inline Shared Stylesheets", "Lazy-Load Unseen Images", "Lazy-Load Components"}
+	for i, want := range expected {
+		if results[i].Category != want {
+			t.Errorf("results[%d] (%q) landed on %q, want %q", i, results[i].Input, results[i].Category, want)
+		}
+	}
+}
+
+// A submitter who already used a name the board carries must land on that row,
+// not on a rule's synonym for it.
+func TestAnExistingGenericNameWinsOverARuleSynonym(t *testing.T) {
+	categories := fixtureCategories(t)
+	embedder, threshold := localEmbedder()
+	before := findCategory(t, categories, "Gzip / Brotli Compression")
+
+	updated, results := leaderboard.Categorize([]leaderboard.Improvement{{
+		Name: "Gzip / Brotli Compression", Description: "Turned on text compression at the origin",
+		DeltaPct: -12, HasDeltaPct: true,
+	}}, categories, embedder, threshold)
+
+	if results[0].Action != "matched" || results[0].Category != "Gzip / Brotli Compression" {
+		t.Fatalf("expected a fold into the existing row, got %+v", results[0])
+	}
+	if after := findCategory(t, updated, "Gzip / Brotli Compression"); after.Count != before.Count+1 {
+		t.Errorf("count: got %d, want %d", after.Count, before.Count+1)
+	}
+	if len(updated) != len(categories) {
+		t.Errorf("no category should have been created, got %d new", len(updated)-len(categories))
 	}
 }
 
