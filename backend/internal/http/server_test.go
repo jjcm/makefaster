@@ -49,7 +49,7 @@ func freshDatabase(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { pool.Close() })
 
-	for _, table := range []string{"sites", "improvement_categories", "goose_db_version"} {
+	for _, table := range []string{"sites", "improvement_categories", "tips", "goose_db_version"} {
 		if _, err := pool.Exec("DROP TABLE IF EXISTS " + table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}
@@ -548,6 +548,132 @@ func TestSubmitSiteStoresBothEndsOfEachMetric(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(rejected.Errors, " "), "lcpBefore") {
 		t.Errorf("expected an lcpBefore error, got %+v", rejected.Errors)
+	}
+}
+
+// Tips are the run's private notes to the catalog maintainers: stored in the
+// tips table, acknowledged only as a count, and never served — not on either
+// public board, and not anywhere the CLI's imported checklist comes from.
+func TestSubmitSiteStoresTipsPrivately(t *testing.T) {
+	pool := freshDatabase(t)
+	base := boot(t, pool).URL
+
+	var submitted struct {
+		OK           bool `json:"ok"`
+		TipsRecorded int  `json:"tipsRecorded"`
+	}
+	body := `{"url":"https://tipped.example.com","mode":"cold","lcpRaw":1400,"lcpDelta":-30,"ttiRaw":2300,"ttiDelta":-23,
+		"tips":[
+			{"text":"Enable Gzip and Enable Brotli read as duplicates of Precompress Static Assets","about":"catalog"},
+			{"text":"Skip the SPA-internal rows when the LCP surface is a prebuilt bundle"}
+		]}`
+	if status := postJSON(t, base+"/api/submit-site", body, &submitted); status != http.StatusCreated {
+		t.Fatalf("submit = %d, want 201", status)
+	}
+	if !submitted.OK || submitted.TipsRecorded != 2 {
+		t.Errorf("expected 2 recorded tips, got %+v", submitted)
+	}
+
+	rows, err := pool.Query("SELECT url, about, text FROM tips ORDER BY id")
+	if err != nil {
+		t.Fatalf("read tips: %v", err)
+	}
+	defer rows.Close()
+	type storedTip struct{ url, about, text string }
+	stored := []storedTip{}
+	for rows.Next() {
+		var tip storedTip
+		if err := rows.Scan(&tip.url, &tip.about, &tip.text); err != nil {
+			t.Fatalf("scan tip: %v", err)
+		}
+		stored = append(stored, tip)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read tips: %v", err)
+	}
+	if len(stored) != 2 {
+		t.Fatalf("expected 2 stored tips, got %d: %+v", len(stored), stored)
+	}
+	if stored[0].url != "tipped.example.com" || stored[0].about != "catalog" ||
+		stored[0].text != "Enable Gzip and Enable Brotli read as duplicates of Precompress Static Assets" {
+		t.Errorf("first tip stored wrong: %+v", stored[0])
+	}
+	if stored[1].about != "" || stored[1].text != "Skip the SPA-internal rows when the LCP surface is a prebuilt bundle" {
+		t.Errorf("second tip stored wrong: %+v", stored[1])
+	}
+
+	// The whole point: nothing public carries a tip. Both data endpoints are
+	// checked as raw bytes, so a tip cannot hide in any field.
+	for _, path := range []string{"/data/sites.json", "/data/improvements.json"} {
+		res, err := http.Get(base + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		payload, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		for _, leak := range []string{"tipsRecorded", "duplicates of Precompress", "prebuilt bundle", `"about"`} {
+			if strings.Contains(strings.ToLower(string(payload)), strings.ToLower(leak)) {
+				t.Errorf("GET %s leaks %q: %s", path, leak, payload)
+			}
+		}
+	}
+}
+
+// Tips are best-effort: a malformed or oversized tips field is clamped, never
+// a reason to reject the run's site row.
+func TestSubmitSiteClampsAndTolerantlyReadsTips(t *testing.T) {
+	pool := freshDatabase(t)
+	base := boot(t, pool).URL
+
+	// 12 tips, one of them garbage, one blank, and one oversized: the ten
+	// usable ones are kept and the long text is cut at 280 characters.
+	entries := []string{`"nonsense"`, `{"text":""}`}
+	long := strings.Repeat("x", 400)
+	entries = append(entries, `{"text":"`+long+`","about":"`+strings.Repeat("a", 100)+`"}`)
+	for i := 0; i < 11; i++ {
+		entries = append(entries, `{"text":"tip number `+string(rune('a'+i))+`"}`)
+	}
+	var submitted struct {
+		TipsRecorded int `json:"tipsRecorded"`
+	}
+	body := `{"url":"https://clamped.example.com","mode":"cold","lcpRaw":1400,"lcpDelta":-30,"ttiRaw":2300,"ttiDelta":-23,
+		"tips":[` + strings.Join(entries, ",") + `]}`
+	if status := postJSON(t, base+"/api/submit-site", body, &submitted); status != http.StatusCreated {
+		t.Fatalf("submit = %d, want 201", status)
+	}
+	if submitted.TipsRecorded != 10 {
+		t.Errorf("tipsRecorded: got %d, want the cap of 10", submitted.TipsRecorded)
+	}
+
+	var count int
+	if err := pool.QueryRow("SELECT COUNT(*) FROM tips").Scan(&count); err != nil {
+		t.Fatalf("count tips: %v", err)
+	}
+	if count != 10 {
+		t.Errorf("stored tips: got %d, want 10", count)
+	}
+	var longest int
+	if err := pool.QueryRow("SELECT MAX(CHAR_LENGTH(text)) FROM tips").Scan(&longest); err != nil {
+		t.Fatalf("measure tips: %v", err)
+	}
+	if longest != 280 {
+		t.Errorf("longest stored tip: got %d characters, want the cap of 280", longest)
+	}
+
+	// A tips field that is not an array is ignored, and a submission with no
+	// tips does not answer with a tips count at all.
+	res, err := http.Post(base+"/api/submit-site", "application/json", strings.NewReader(
+		`{"url":"https://plain.example.com","mode":"cold","lcpRaw":1400,"lcpDelta":-30,"ttiRaw":2300,"ttiDelta":-23,"tips":"not an array"}`))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	payload, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusCreated {
+		t.Errorf("a bogus tips field must not cost the run its row: got %d", res.StatusCode)
+	}
+	if strings.Contains(string(payload), "tipsRecorded") {
+		t.Errorf("a submission without tips should not mention them: %s", payload)
 	}
 }
 

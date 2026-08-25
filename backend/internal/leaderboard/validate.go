@@ -19,6 +19,11 @@ const (
 	improvementsMax = 50
 	submitNameMax   = 120
 	descriptionMax  = 500
+
+	// Tips are short notes to the catalog maintainers, not documents.
+	tipsMax     = 10
+	tipTextMax  = 280
+	tipAboutMax = 80
 )
 
 // ValidationError is a rejected payload: the errors are returned verbatim as
@@ -250,6 +255,8 @@ func ValidateSitePayload(body map[string]any) (SiteSubmission, error) {
 		errors = append(errors, "name must be a short string when provided")
 	}
 
+	tips := readTips(body["tips"])
+
 	if len(errors) > 0 {
 		return SiteSubmission{}, invalid(errors...)
 	}
@@ -288,7 +295,48 @@ func ValidateSitePayload(body map[string]any) (SiteSubmission, error) {
 	if nameString, ok := name.(string); ok && strings.TrimSpace(nameString) != "" {
 		submission.Name = strings.TrimSpace(nameString)
 	}
+	submission.Tips = tips
 	return submission, nil
+}
+
+// readTips reads the optional `tips` field of a site submission: notes to the
+// catalog maintainers, capped in length and count.
+//
+// Tips are best-effort by design, so this clamps instead of rejecting: a
+// malformed tip must never cost a run its site row, the way an unreadable
+// `prUrl` never does. Entries that are not objects with a non-empty text are
+// dropped, text and about are truncated to their caps, and everything past
+// tipsMax entries is ignored.
+func readTips(field any) []Tip {
+	entries, isArray := field.([]any)
+	if !isArray {
+		return nil
+	}
+
+	tips := make([]Tip, 0, tipsMax)
+	for _, raw := range entries {
+		if len(tips) == tipsMax {
+			break
+		}
+		entry, isObject := raw.(map[string]any)
+		if !isObject {
+			continue
+		}
+		text, _ := entry["text"].(string)
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
+		about, _ := entry["about"].(string)
+		tips = append(tips, Tip{
+			Text:  truncate(text, tipTextMax),
+			About: truncate(strings.TrimSpace(about), tipAboutMax),
+		})
+	}
+	if len(tips) == 0 {
+		return nil
+	}
+	return tips
 }
 
 func isShortName(field any) bool {

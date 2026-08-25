@@ -183,6 +183,70 @@ func TestValidateSitePayloadReadsTheKeepSplit(t *testing.T) {
 	}
 }
 
+// Tips ride along with a site submission as notes to the catalog maintainers.
+// They are best-effort by design: entries are clamped and malformed ones are
+// dropped, because a bad tip must never cost a run its site row.
+func TestValidateSitePayloadReadsTipsLeniently(t *testing.T) {
+	metrics := `"url": "example.com", "mode": "cold", "lcpRaw": 1000, "lcpDelta": -1, "ttiRaw": 2000, "ttiDelta": -2`
+
+	submission, err := leaderboard.ValidateSitePayload(decode(t, "{"+metrics+`, "tips": [
+		{ "text": "  Enable Gzip duplicates Precompress Static Assets  ", "about": "  catalog  " },
+		{ "text": "Skip SPA-internal rows when the bundle is prebuilt" },
+		{ "text": "" },
+		"not an object",
+		{ "about": "no text at all" }
+	]}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(submission.Tips) != 2 {
+		t.Fatalf("expected the 2 usable tips, got %+v", submission.Tips)
+	}
+	if submission.Tips[0].Text != "Enable Gzip duplicates Precompress Static Assets" || submission.Tips[0].About != "catalog" {
+		t.Errorf("first tip should be trimmed: %+v", submission.Tips[0])
+	}
+	if submission.Tips[1].About != "" {
+		t.Errorf("an omitted about stays empty: %+v", submission.Tips[1])
+	}
+
+	// Caps: 280 characters of text, 80 of about, 10 tips.
+	long := strings.Repeat("y", 400)
+	capped, err := leaderboard.ValidateSitePayload(decode(t,
+		"{"+metrics+`, "tips": [{ "text": "`+long+`", "about": "`+strings.Repeat("z", 100)+`" }]}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len([]rune(capped.Tips[0].Text)) != 280 || len([]rune(capped.Tips[0].About)) != 80 {
+		t.Errorf("tip should be truncated to 280/80, got %d/%d",
+			len([]rune(capped.Tips[0].Text)), len([]rune(capped.Tips[0].About)))
+	}
+
+	var entries []string
+	for i := 0; i < 15; i++ {
+		entries = append(entries, `{"text":"tip"}`)
+	}
+	many, err := leaderboard.ValidateSitePayload(decode(t, "{"+metrics+`, "tips": [`+strings.Join(entries, ",")+`]}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(many.Tips) != 10 {
+		t.Errorf("tips should be capped at 10, got %d", len(many.Tips))
+	}
+
+	// A tips field that is not an array is ignored rather than rejected, and a
+	// payload without one carries no tips at all.
+	for _, fields := range []string{`, "tips": "a string"`, `, "tips": null`, `, "tips": 4`, ``} {
+		submission, err := leaderboard.ValidateSitePayload(decode(t, "{"+metrics+fields+"}"))
+		if err != nil {
+			t.Errorf("%s: unexpected error: %v", fields, err)
+			continue
+		}
+		if submission.Tips != nil {
+			t.Errorf("%s: expected no tips, got %+v", fields, submission.Tips)
+		}
+	}
+}
+
 func TestValidateImprovementsPayload(t *testing.T) {
 	improvements, err := leaderboard.ValidateImprovementsPayload(decode(t, `{
 		"url": "example.com",
