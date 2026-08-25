@@ -26,6 +26,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { buildAgentSpawn, claudePrintModeArgs, childEnv, isAuthRequiredError } from "../invoke.js";
 import { classifyEvent } from "../progress.js";
+import { thinkingTextOf } from "../thinkingTrace.js";
 
 const SDK_MODULE = "@anthropic-ai/claude-agent-sdk";
 
@@ -89,6 +90,7 @@ async function runWithSdk({ sdk, provider, prompt, cwd, model, env, reporter, si
   try {
     const session = sdk.query({ prompt: singlePromptIterable(prompt), options });
     for await (const message of session) {
+      reporter.thought?.(thinkingTextOf("claude-stream-json", message));
       reporter.update(classifyEvent("claude-stream-json", message));
     }
     return { exitCode: 0, stderrTail: stderrTail.trim(), aborted: Boolean(signal?.aborted), authRequired: false, path: "sdk" };
@@ -136,7 +138,9 @@ function runWithPrintMode({ provider, prompt, cwd, model, env, reporter, signal 
         const trimmed = line.trim();
         if (trimmed === "") return;
         try {
-          reporter.update(classifyEvent("claude-stream-json", JSON.parse(trimmed)));
+          const event = JSON.parse(trimmed);
+          reporter.thought?.(thinkingTextOf("claude-stream-json", event));
+          reporter.update(classifyEvent("claude-stream-json", event));
         } catch {
           /* not a protocol frame */
         }

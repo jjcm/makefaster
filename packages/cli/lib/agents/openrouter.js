@@ -20,6 +20,7 @@
  *     results.json — the same contract every other provider follows.
  */
 
+import { thinkingTextOf } from "../thinkingTrace.js";
 import { TOOL_SCHEMAS, createTools, describeToolCall } from "./tools.js";
 
 /** The path the server exposes the OpenAI-compatible proxy on. */
@@ -123,6 +124,9 @@ export async function runOpenRouterSession({
     // Assistant prose is not shown anywhere: the panel is the step log. It is
     // kept in the history because it is the model's own reasoning trail.
     messages.push(message);
+    // A reasoning model's thinking for this turn, when the proxy passed one
+    // through — captured for the trace, never displayed, never in the history.
+    reporter?.thought?.(thinkingTextOf("openai-message", message));
     reporter?.update?.({ tag: "EXECUTE", text: labelFor(message) });
 
     const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];

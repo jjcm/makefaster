@@ -17,6 +17,7 @@
 import { createJsonRpcChild } from "../jsonrpc.js";
 import { buildAgentSpawn, isAuthRequiredError } from "../invoke.js";
 import { classifyEvent } from "../progress.js";
+import { thinkingTextOf } from "../thinkingTrace.js";
 
 const CLIENT_INFO = { name: "makefaster", version: "1.0.0", title: null };
 const INITIALIZE_PARAMS = { clientInfo: CLIENT_INFO, capabilities: { experimentalApi: true } };
@@ -83,6 +84,9 @@ export async function runCodexSession({ provider, prompt, cwd, model = null, env
     env: spawnSpec.options.env,
     label: `${provider.displayName} (app-server)`,
     onNotification: (method, params) => {
+      // Reasoning arrives as deltas the classifier drops as token noise; the
+      // trace keeps the text and the panel still sees nothing.
+      reporter.thought?.(thinkingTextOf("codex-app-server", { method, params }));
       reporter.update(classifyEvent("codex-app-server", { method, params }));
       // The turn is what makefaster waits on: turn/start only acknowledges the
       // dispatch, so completion arrives as a notification.

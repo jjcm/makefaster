@@ -10,6 +10,14 @@ const MAX_TIPS = 10;
 const TIP_TEXT_MAX = 280;
 const TIP_ABOUT_MAX = 80;
 
+// Trace caps, mirroring the server's. They are the reason a huge build log
+// cannot arrive here: a trace is reasoning text and a short iteration list, and
+// anything past these bounds is dropped before the request is built.
+const MAX_TRACE_BLOCKS = 400;
+const TRACE_BLOCK_MAX = 8_000;
+const TRACE_TOTAL_MAX = 192_000;
+const TRACE_ITERATIONS_MAX = 200;
+
 export function resolveApiBase({ flag, env = process.env } = {}) {
   return (flag || env.MAKEFASTER_API_BASE || DEFAULT_API_BASE).replace(/\/$/, "");
 }
@@ -41,6 +49,10 @@ export function submitSite(apiBase, payload) {
 
 export function submitImprovements(apiBase, payload) {
   return postJson(apiBase, "/api/submit-improvements", payload);
+}
+
+export function submitTrace(apiBase, payload) {
+  return postJson(apiBase, "/api/submit-trace", payload);
 }
 
 function pctChange(baseline, final) {
@@ -160,6 +172,83 @@ export function buildSitePayloads(results, siteUrl) {
  * that says nothing is submitted, which is what every session written before
  * the field existed does.
  */
+/**
+ * The distilled results.json a trace carries: what was tried, in order, and
+ * what the numbers said. Fields are listed one by one rather than spread, for
+ * the same reason `buildImprovementsPayload` does it — an iteration's `notes`
+ * is where the skill puts everything specific to this repo, and a trace is a
+ * record of reasoning, not a place for it to arrive by accident.
+ */
+function traceResults(results) {
+  if (!results || results.parseError) return null;
+  const iterations = (results.iterations || [])
+    .filter((it) => it && typeof it === "object")
+    .slice(0, TRACE_ITERATIONS_MAX)
+    .map((it) => ({
+      ...(it.name ? { name: String(it.name).slice(0, 120) } : {}),
+      ...(it.description ? { description: String(it.description).slice(0, 500) } : {}),
+      ...(typeof it.kept === "boolean" ? { kept: it.kept } : {}),
+      ...(typeof it.deltaMs === "number" ? { deltaMs: it.deltaMs } : {}),
+      ...(typeof it.deltaPct === "number" ? { deltaPct: it.deltaPct } : {}),
+      ...(it.phase ? { phase: String(it.phase).slice(0, 40) } : {}),
+      ...(typeof it.generic === "boolean" ? { generic: it.generic } : {}),
+    }));
+  const payload = {
+    ...(results.northStar ? { northStar: String(results.northStar).slice(0, 40) } : {}),
+    ...(results.baseline && typeof results.baseline === "object" ? { baseline: results.baseline } : {}),
+    ...(results.final && typeof results.final === "object" ? { final: results.final } : {}),
+    ...(iterations.length > 0 ? { iterations } : {}),
+  };
+  return Object.keys(payload).length > 0 ? payload : null;
+}
+
+/**
+ * The chain-of-thought payload for POST /api/submit-trace: the round's thinking
+ * blocks in order, the iteration list, and the metadata that says which run
+ * produced them.
+ *
+ * `thinking` is text and only text. The blocks come from
+ * `.makefaster/thinking-trace.jsonl`, which is written from the provider's
+ * reasoning stream (see lib/thinkingTrace.js) — no tool calls, no tool results,
+ * no file contents, no command output. The caps here are the client half of the
+ * server's: 400 blocks, 8k characters each, ~192k in total, so a session that
+ * thought out loud for an hour still sends a request rather than a log.
+ *
+ * Returns null when there is nothing to send, so the end screen can say so
+ * instead of posting an empty trace.
+ */
+export function buildTracePayload({ blocks, results, state = {}, resultsSubmitted = false, siteUrl = null }) {
+  const thinking = [];
+  let total = 0;
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    if (thinking.length >= MAX_TRACE_BLOCKS || total >= TRACE_TOTAL_MAX) break;
+    const text = typeof block?.text === "string" ? block.text.trim() : "";
+    if (text === "") continue;
+    const clipped = text.slice(0, Math.min(TRACE_BLOCK_MAX, TRACE_TOTAL_MAX - total));
+    thinking.push({ text: clipped });
+    total += clipped.length;
+  }
+
+  const distilled = traceResults(results);
+  if (thinking.length === 0 && !distilled) return null;
+
+  const product = results?.site?.name || siteUrl || state.siteUrl || results?.site?.url || "";
+  const prUrl = sitePrUrl(results);
+  return {
+    ...(state.runId ? { runId: String(state.runId).slice(0, 64) } : {}),
+    ...(product ? { product: String(product).slice(0, 200) } : {}),
+    ...(prUrl ? { prUrl } : {}),
+    ...(state.provider ? { agent: String(state.provider).slice(0, 40) } : {}),
+    ...(state.model ? { model: String(state.model).slice(0, 120) } : {}),
+    ...(Number.isFinite(state.round) ? { round: state.round } : {}),
+    ...(state.startedAt ? { startedAt: String(state.startedAt).slice(0, 40) } : {}),
+    submittedAt: new Date().toISOString(),
+    resultsSubmitted: Boolean(resultsSubmitted),
+    thinking,
+    ...(distilled ? { results: distilled } : {}),
+  };
+}
+
 export function buildImprovementsPayload(results) {
   const kept = (results?.iterations || [])
     .filter((it) => it && it.kept === true && it.name && it.generic !== false)

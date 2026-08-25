@@ -36,6 +36,7 @@ The CLI owns this directory. Never commit it (it is already in
 | `state.json` | CLI (read-only for you) | the run's plan: `checklistCount`, `extrasBudget`, `plannedRuns`, the round |
 | `results.json` | **you**, after every iteration | the session record the CLI reads back |
 | `thinking.log` | **you**, as each step starts | one tagged line per step — the only thing the user sees while you work |
+| `thinking-trace.jsonl` | CLI (not yours — do not read or write it) | your provider's own reasoning text, captured off the protocol stream in case the user chooses to submit it after the run |
 
 `improvements.json` is **the order you work in and the length of the run** (see
 Step 2), not a script to apply blindly: you still judge whether each category is
