@@ -729,7 +729,6 @@ site-header { display: block; }
 .site-url { font-size: 11.5px; color: var(--muted); }
 
 .num-cell { font-family: var(--font-mono); font-weight: 600; font-size: 16px; color: var(--ink); }
-.num-cell .spark { margin-left: 14px; color: var(--ink); opacity: 0.8; vertical-align: baseline; }
 
 /* The pre-loop baseline sits beside the measurement it was beaten by, so it is
    muted: the eye should land on the "after" figure. */

@@ -37,17 +37,6 @@ const COLUMN_COUNT = 7;
 
 const fmt = new Intl.NumberFormat("en-US");
 
-// Fixed ascending staircase glyph, as drawn beside raw values in the design.
-const SPARK =
-  '<svg class="spark" width="27" height="14" viewBox="0 0 27 14" fill="currentColor" aria-hidden="true">' +
-  ["3", "4.5", "6", "7.5", "9", "10.5", "12", "13.5"]
-    .map(function (h, i) {
-      var height = parseFloat(h);
-      return '<rect x="' + i * 3.4 + '" y="' + (14 - height) + '" width="2.1" height="' + height + '"/>';
-    })
-    .join("") +
-  "</svg>";
-
 const DOWN_ARROW =
   '<svg class="icon" width="10" height="12" viewBox="0 0 10 12" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">' +
   '<path d="M5 0v10M1 7l4 4 4-4"/></svg>';
@@ -71,20 +60,22 @@ const VS_BASELINE = `
   </svg>
   <span>vs. baseline</span>`;
 
-/** The pre-loop measurement: same figures as the after column, muted. */
-function baselineCell(ms) {
+/** One measured time in milliseconds, or an en dash when it was not measured. */
+function timeCell(ms, className) {
   var td = document.createElement("td");
-  td.className = "num-cell num-cell--before";
+  td.className = className;
   td.textContent = typeof ms === "number" ? fmt.format(ms) : "\u2013";
   return td;
 }
 
-/** The measurement the loop ended on, with the staircase glyph beside it. */
+/** The pre-loop measurement: same figures as the after column, muted. */
+function baselineCell(ms) {
+  return timeCell(ms, "num-cell num-cell--before");
+}
+
+/** The measurement the loop ended on. */
 function measuredCell(ms) {
-  var td = document.createElement("td");
-  td.className = "num-cell";
-  td.innerHTML = typeof ms === "number" ? escapeHtml(fmt.format(ms)) + SPARK : "\u2013";
-  return td;
+  return timeCell(ms, "num-cell");
 }
 
 function deltaCell(pct) {
