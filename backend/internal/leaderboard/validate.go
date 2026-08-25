@@ -84,6 +84,23 @@ func present(field any, exists bool) bool {
 	return exists && field != nil
 }
 
+// trimmedField reads the first of `names` the body actually carries, with a
+// string value trimmed so " https://… " validates as the URL it is. The bool
+// reports whether any of the names was present and non-null.
+func trimmedField(body map[string]any, names ...string) (any, bool) {
+	for _, name := range names {
+		value, exists := body[name]
+		if !present(value, exists) {
+			continue
+		}
+		if text, isString := value.(string); isString {
+			return strings.TrimSpace(text), true
+		}
+		return value, true
+	}
+	return nil, false
+}
+
 func isHTTPURL(field any) bool {
 	value, isString := field.(string)
 	if !isString || len(value) > 500 {
@@ -114,7 +131,7 @@ func BaselineFromDelta(measured int, deltaPct float64) int {
 
 // ValidateSitePayload checks a POST /api/submit-site body:
 //
-//	{ url, favicon?, name?, lcpBefore?, lcpRaw, lcpDelta,
+//	{ url, favicon?, name?, prUrl?, lcpBefore?, lcpRaw, lcpDelta,
 //	  ttiBefore?, ttiRaw, ttiDelta, mode: cold|warm }
 //
 // lcpRaw/ttiRaw are the measurement after the loop and the deltas are
@@ -164,6 +181,13 @@ func ValidateSitePayload(body map[string]any) (SiteSubmission, error) {
 		errors = append(errors, "favicon must be an http(s) URL when provided")
 	}
 
+	// `pr` is accepted alongside `prUrl` because both readings of the field are
+	// natural and a rejected submission would cost the loop its whole run.
+	prURL, prURLGiven := trimmedField(body, "prUrl", "pr")
+	if prURLGiven && !isHTTPURL(prURL) {
+		errors = append(errors, "prUrl must be an http(s) URL when provided")
+	}
+
 	name, nameExists := body["name"]
 	if present(name, nameExists) && !isShortName(name) {
 		errors = append(errors, "name must be a short string when provided")
@@ -198,6 +222,9 @@ func ValidateSitePayload(body map[string]any) (SiteSubmission, error) {
 	}
 	if faviconString, ok := favicon.(string); ok && faviconString != "" {
 		submission.Favicon = faviconString
+	}
+	if prURLString, ok := prURL.(string); ok {
+		submission.PRURL = prURLString
 	}
 	if nameString, ok := name.(string); ok && strings.TrimSpace(nameString) != "" {
 		submission.Name = strings.TrimSpace(nameString)

@@ -1,0 +1,92 @@
+[
+  {
+    "url": "dave.com",
+    "was": "Legend of Dave",
+    "now": "Legend of Dave",
+    "prUrl": ""
+  },
+  {
+    "url": "github.com",
+    "was": "Langflow (fork)",
+    "now": "Langflow",
+    "prUrl": "https://github.com/jjcm/langflow/pull/1"
+  },
+  {
+    "url": "prompts.chat",
+    "was": "prompts.chat",
+    "now": "prompts.chat",
+    "prUrl": "https://github.com/jjcm/prompts.chat/pull/1"
+  },
+  {
+    "url": "excalidraw.com",
+    "was": "Excalidraw",
+    "now": "Excalidraw",
+    "prUrl": "https://github.com/jjcm/excalidraw/pull/1"
+  },
+  {
+    "url": "dify.ai",
+    "was": "Dify Studio (self-hosted)",
+    "now": "Dify",
+    "prUrl": "https://github.com/jjcm/dify/pull/1"
+  },
+  {
+    "url": "roadmap.sh",
+    "was": "roadmap.sh",
+    "now": "roadmap.sh",
+    "prUrl": "https://github.com/jjcm/developer-roadmap/pull/1"
+  },
+  {
+    "url": "n8n.io",
+    "was": "n8n (self-hosted editor, jjcm/n8n fork)",
+    "now": "n8n",
+    "prUrl": "https://github.com/jjcm/n8n/pull/1"
+  },
+  {
+    "url": "freecodecamp.org",
+    "was": "freeCodeCamp",
+    "now": "freeCodeCamp",
+    "prUrl": "https://github.com/jjcm/freeCodeCamp/pull/1"
+  },
+  {
+    "url": "app.nextchat.club",
+    "was": "NextChat",
+    "now": "NextChat",
+    "prUrl": "https://github.com/jjcm/NextChat/pull/1"
+  },
+  {
+    "url": "uptime.kuma.pet",
+    "was": "Uptime Kuma (self-hosted dashboard)",
+    "now": "Uptime Kuma",
+    "prUrl": "https://github.com/jjcm/uptime-kuma/pull/1"
+  },
+  {
+    "url": "ragflow.io",
+    "was": "RAGFlow",
+    "now": "RAGFlow",
+    "prUrl": "https://github.com/jjcm/ragflow/pull/1"
+  },
+  {
+    "url": "immich.app",
+    "was": "Immich",
+    "now": "Immich",
+    "prUrl": "https://github.com/jjcm/immich/pull/1"
+  },
+  {
+    "url": "home-assistant.io",
+    "was": "Home Assistant",
+    "now": "Home Assistant",
+    "prUrl": "https://github.com/jjcm/home-assistant/pull/1"
+  },
+  {
+    "url": "stirlingpdf.com",
+    "was": "Stirling PDF",
+    "now": "Stirling PDF",
+    "prUrl": "https://github.com/jjcm/Stirling-PDF/pull/1"
+  },
+  {
+    "url": "new.opencut.app",
+    "was": "OpenCut",
+    "now": "OpenCut",
+    "prUrl": ""
+  }
+]

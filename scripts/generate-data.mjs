@@ -210,10 +210,17 @@ function pushSite(site, { hero = false } = {}) {
   const tests = ri(3, 10);
   const measuredAt = hero && site.url === "google.com" ? "2024-05-12T14:15:00Z" : randomMeasuredAt();
 
+  // Most runs are opened as a pull request and the board links the row to it,
+  // but not all of them are, so a synthetic board has to exercise both.
+  const prUrl = rand() < 0.75
+    ? `https://github.com/jjcm/${site.url.split(".")[0]}/pull/${ri(1, 9)}`
+    : "";
+
   for (const [mode, m] of [["cold", cold], ["warm", warm]]) {
     rows.push({
       name: site.name,
       url: site.url,
+      ...(prUrl ? { prUrl } : {}),
       favicon: favicon(site.url),
       lcpRaw: m.lcpRaw,
       lcpDelta: m.lcpDelta,

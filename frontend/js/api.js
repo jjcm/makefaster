@@ -56,10 +56,11 @@ function postJson(path, payload) {
 
 /**
  * Site leaderboard rows.
- * Row shape: { name, url, favicon, lcpRaw, lcpDelta, ttiRaw, ttiDelta,
- *              mode, tests, measuredAt }
+ * Row shape: { name, url, favicon, lcpBefore, lcpRaw, lcpDelta, ttiBefore,
+ *              ttiRaw, ttiDelta, mode, tests, measuredAt, prUrl? }
  * lcpDelta / ttiDelta are percentages vs. baseline (negative = faster).
  * mode is "cold" or "warm".
+ * prUrl is the pull request the run was opened as, absent when there is none.
  */
 export function getSites() {
   return getJson(DATA_PATHS.sites);
@@ -99,8 +100,12 @@ function assertFields(payload, fields, label) {
  *   lcpDelta: -34,                  // required — % vs. baseline (negative = faster)
  *   ttiRaw:   2945,                 // required — ms
  *   ttiDelta: -29,                  // required — % vs. baseline
- *   name:     "Example",            // optional display name
- *   favicon:  "https://..."         // optional favicon URL
+ *   name:     "Example",            // optional display name — the product's
+ *                                   //   own name, not the deployment's
+ *   favicon:  "https://...",        // optional favicon URL
+ *   prUrl:    "https://github.com/owner/repo/pull/1" // optional; also read
+ *                                   //   as `pr`. The site name on the board
+ *                                   //   links to it.
  * }
  *
  * Resolves the server response: { ok, created, row }.

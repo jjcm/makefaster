@@ -172,6 +172,30 @@ it cannot). So a site-specific submission does not create a site-specific row.
 Write the generic name and description yourself anyway: the normalizer is a
 backstop, not a copywriter, and what it cannot rescue it throws away.
 
+## Naming the site — the product, not your deployment
+
+`site.name` is the row's title on the public site leaderboard, so it is the
+**product's own name**: `Dify`, `n8n`, `Uptime Kuma`, `Langflow`,
+`Home Assistant`. It is not a description of the copy you measured.
+
+Leave out every one of these:
+
+- `(fork)`, `(self-hosted)`, `selfhosted`, `(self-hosted dashboard)`;
+- the fork you ran — `jjcm branch`, `jjcm/n8n fork`;
+- the screen you profiled — `dashboard`, `editor`, `studio`, `console`.
+
+| bad | good |
+|---|---|
+| `Dify Studio (self-hosted)` | `Dify` |
+| `n8n (self-hosted editor, jjcm/n8n fork)` | `n8n` |
+| `Langflow (fork)` | `Langflow` |
+| `Uptime Kuma (self-hosted dashboard)` | `Uptime Kuma` |
+
+Two people measuring the same product must land on the same name, and the
+deployment you used is already recorded — the URL is in `site.url` and the fork
+is in `site.prUrl`. The server strips these qualifiers on ingest as a backstop,
+so a name it does not recognize is the only way one reaches the board.
+
 ## Step 3 — the stop rule
 
 When `missStreak` reaches `maxMisses` (default **5**) consecutive attempts
@@ -179,7 +203,13 @@ with no serious improvement:
 
 1. Run one final full measurement pass (cold + warm) and write it to
    `results.final`.
-2. Set `stoppedReason: "miss-streak"`, make sure every iteration is recorded,
+2. If the kept changes are on a branch you can push, open a pull request for
+   them and put its URL in `site.prUrl` (e.g.
+   `https://github.com/jjcm/n8n/pull/1`). The site leaderboard links the row to
+   it, so the board shows the diff behind every number instead of asking readers
+   to take the percentage on faith. Do not open one if the user has not asked
+   you to push anywhere.
+3. Set `stoppedReason: "miss-streak"`, make sure every iteration is recorded,
    and **exit your session**. The CLI takes over: it shows the user the end
    screen and asks whether to loop more (it will reset the counter and
    re-invoke you), submit site stats to the public site leaderboard, and/or
@@ -214,7 +244,8 @@ milliseconds. Deltas are negative when the site got faster.
   "site": {
     "url": "example.com",
     "name": "Example",
-    "favicon": "https://example.com/favicon.ico"
+    "favicon": "https://example.com/favicon.ico",
+    "prUrl": "https://github.com/jjcm/example/pull/1"
   },
   "northStar": "lcp",
   "profilingTool": "lighthouse 12.x, median of 3 runs, headless Chrome",
@@ -259,6 +290,13 @@ Field notes:
 - `site.url` — bare domain of the deployed site if the user told you or the
   repo makes it obvious; otherwise leave the `site` object out and the CLI
   will ask the user before submitting.
+- `site.name` — the **product's own name and nothing else**, because it is the
+  row's title on the public board: `Dify`, `n8n`, `Uptime Kuma`, `Langflow`.
+  See "Naming the site" below.
+- `site.prUrl` — the pull request you opened for the changes this session kept,
+  e.g. `https://github.com/jjcm/n8n/pull/1`. The site leaderboard links the
+  row's name to it, so a reader can go from the number to the diff. Leave it
+  out if there is no PR; the row simply will not be a link.
 - `site.favicon` — a favicon URL if the site has one (`<link rel="icon">` or
   `/favicon.ico`); it is shown next to the URL on the site leaderboard.
 - `baseline` / `final` — medians per mode. Include the modes you measured;

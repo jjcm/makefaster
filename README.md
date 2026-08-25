@@ -61,7 +61,8 @@ What happens:
    questions:
    - **Loop more?** — resets the miss counter and continues.
    - **Submit stats to the Site leaderboard?** — your URL and favicon are
-     displayed publicly with the measured LCP/TTI improvements.
+     displayed publicly with the measured LCP/TTI improvements, and the row
+     links to the pull request the run was opened as when there is one.
    - **Submit anonymous improvements data?** — no URL; category names,
      descriptions, and deltas only. Novel improvements become new categories
      on the improvement leaderboard.
@@ -291,7 +292,7 @@ start empty and grow as loops report results:
 | `GET /data/sites.json` | live site rows, one per site per load mode | `MakefasterAPI.getSites()` |
 | `GET /data/improvements.json` | live ranked categories | `MakefasterAPI.getImprovements()` |
 | `GET /api/health` | `{ ok, embedder, threshold }` | — |
-| `POST /api/submit-site` | `{ url, favicon?, name?, lcpBefore?, lcpRaw, lcpDelta, ttiBefore?, ttiRaw, ttiDelta, mode: cold\|warm }` — upserts the site's row; URL + favicon shown publicly | `MakefasterAPI.submitSite(payload)` |
+| `POST /api/submit-site` | `{ url, favicon?, name?, prUrl?, lcpBefore?, lcpRaw, lcpDelta, ttiBefore?, ttiRaw, ttiDelta, mode: cold\|warm }` — upserts the site's row; URL + favicon shown publicly, `name` reduced to the product's own name, `prUrl` (or `pr`) linked from it | `MakefasterAPI.submitSite(payload)` |
 | `POST /api/submit-improvements` | `{ improvements: [{ name, description?, deltaMs?, deltaPct? }] }` — anonymous; names and descriptions are normalized to generic techniques and embedding-matched into categories | `MakefasterAPI.submitImprovements(payload)` |
 
 Each metric has both ends of the run: `lcpRaw`/`ttiRaw` are the measurement
@@ -299,6 +300,18 @@ after the last kept change, `lcpBefore`/`ttiBefore` the pre-loop baseline, and
 the deltas the percentage between them, negative = faster. The two `*Before`
 fields are optional — a client that omits them has the baseline recovered from
 the delta (`before = after / (1 + delta/100)`).
+
+A row's name is the **product's**, not the deployment's: submitted names have
+described one person's copy of the product — `Dify Studio (self-hosted)`,
+`n8n (self-hosted editor, jjcm/n8n fork)`, `Langflow (fork)` — so ingest strips
+parentheticals, fork and self-hosted qualifiers, jjcm references, and a trailing
+UI-surface word (`dashboard`, `editor`, `studio`), leaving `Dify`, `n8n` and
+`Langflow`. Matching is whole-word, so `Forkify` and `Editorial` are untouched.
+The rule is documented for submitters in `packages/skill/SKILL.md`.
+
+`prUrl` is the pull request the run's kept changes were opened as. The site
+leaderboard links the row's name to it, so the board can show the diff behind a
+percentage; a row without one is plain text and the key is left off the JSON.
 
 `POST /api/submit-site` answers `201` when it created the row and `200` when it
 folded a new run into an existing one, both as `{ ok, created, row }`; invalid
@@ -354,8 +367,11 @@ request, so the backend can be switched at any time.
 Row shapes:
 
 ```js
-// site leaderboard — one row per site per load mode
+// site leaderboard — one row per site per load mode.
+// prUrl is the pull request the run was opened as, and is absent when the row
+// has none — the board links the site name to it when it is there.
 { "name": "Example", "url": "example.com", "favicon": "https://…",
+  "prUrl": "https://github.com/jjcm/example/pull/1",
   "lcpBefore": 2791, "lcpRaw": 1842, "lcpDelta": -34,
   "ttiBefore": 4148, "ttiRaw": 2945, "ttiDelta": -29,
   "mode": "cold", "tests": 6, "measuredAt": "2024-05-12T14:15:00.000Z" }

@@ -350,6 +350,64 @@ func TestSubmitSiteInsertsThenUpsertsAndSurvivesRestart(t *testing.T) {
 	}
 }
 
+// A row's identity: the product's name, and the pull request the run was opened
+// as. The name a submitter sends describes their deployment, so it is reduced
+// on the way in; the PR link is stored as sent and served back so the board can
+// link to it. A submission without one leaves the key off the row entirely.
+func TestSubmitSiteStoresTheProductNameAndPullRequest(t *testing.T) {
+	base := boot(t, freshDatabase(t)).URL
+
+	var submitted struct {
+		Row leaderboard.SiteRow `json:"row"`
+	}
+	body := `{"url":"https://n8n.example.com","mode":"cold","name":"n8n (self-hosted editor, jjcm/n8n fork)",
+		"prUrl":"https://github.com/jjcm/n8n/pull/1",
+		"lcpBefore":2000,"lcpRaw":1400,"lcpDelta":-30,"ttiBefore":3000,"ttiRaw":2300,"ttiDelta":-23}`
+	if status := postJSON(t, base+"/api/submit-site", body, &submitted); status != http.StatusCreated {
+		t.Fatalf("submit = %d, want 201", status)
+	}
+	if submitted.Row.Name != "n8n" {
+		t.Errorf("name: got %q, want %q", submitted.Row.Name, "n8n")
+	}
+	if submitted.Row.PRURL != "https://github.com/jjcm/n8n/pull/1" {
+		t.Errorf("prUrl: got %q", submitted.Row.PRURL)
+	}
+
+	// The board the SPA reads carries both, and a row with no pull request does
+	// not carry an empty key for one.
+	plain := `{"url":"https://plain.example.com","mode":"cold","lcpRaw":1000,"lcpDelta":-10,"ttiRaw":2000,"ttiDelta":-10}`
+	if status := postJSON(t, base+"/api/submit-site", plain, nil); status != http.StatusCreated {
+		t.Fatalf("submit without a PR = %d, want 201", status)
+	}
+
+	res, err := http.Get(base + "/data/sites.json")
+	if err != nil {
+		t.Fatalf("GET /data/sites.json: %v", err)
+	}
+	payload, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+
+	var rows []leaderboard.SiteRow
+	if err := json.Unmarshal(payload, &rows); err != nil {
+		t.Fatalf("decode sites: %v", err)
+	}
+	for _, row := range rows {
+		switch row.URL {
+		case "n8n.example.com":
+			if row.Name != "n8n" || row.PRURL != "https://github.com/jjcm/n8n/pull/1" {
+				t.Errorf("the board lost the row's identity: %+v", row)
+			}
+		case "plain.example.com":
+			if row.PRURL != "" {
+				t.Errorf("a row with no pull request got one: %q", row.PRURL)
+			}
+		}
+	}
+	if strings.Contains(string(payload), `"prUrl":""`) {
+		t.Errorf("a row without a pull request must omit the key, got %s", payload)
+	}
+}
+
 // The site board shows before and after for both metrics, so both have to
 // survive a round trip — including for a client that only sends the after
 // value and the delta, which is every CLI released before lcpBefore existed.

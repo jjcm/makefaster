@@ -69,12 +69,17 @@ func DefaultFaviconForURL(host string) string {
 // UpsertSite folds one validated measurement into the row that already exists
 // for this (url, mode), or builds a brand new one.
 //
-// An existing row keeps its derived name/favicon unless the submission
+// An existing row keeps its derived name/favicon/PR link unless the submission
 // overrides them, has its metrics replaced by the latest run, and increments
 // its test counter. A new row starts at one test.
+//
+// Whichever name wins is reduced to the product's own name (ProductSiteName),
+// including a name the row already carried: a row named after somebody's
+// deployment gets corrected by the next run rather than keeping it forever.
 func UpsertSite(existing *SiteRow, submission SiteSubmission, now time.Time) SiteRow {
 	row := SiteRow{
 		URL:        submission.URL,
+		PRURL:      firstNonEmpty(submission.PRURL, existingPRURL(existing)),
 		LCPBefore:  submission.LCPBefore,
 		LCPRaw:     submission.LCPRaw,
 		LCPDelta:   submission.LCPDelta,
@@ -86,7 +91,8 @@ func UpsertSite(existing *SiteRow, submission SiteSubmission, now time.Time) Sit
 		MeasuredAt: FormatTimestamp(now),
 	}
 
-	row.Name = truncate(firstNonEmpty(submission.Name, existingName(existing), DisplayNameForURL(submission.URL)), nameMax)
+	name := firstNonEmpty(submission.Name, existingName(existing), DisplayNameForURL(submission.URL))
+	row.Name = truncate(ProductSiteName(name), nameMax)
 	row.Favicon = firstNonEmpty(submission.Favicon, existingFavicon(existing), DefaultFaviconForURL(submission.URL))
 	if existing != nil {
 		row.Tests = existing.Tests + 1
@@ -106,6 +112,13 @@ func existingFavicon(row *SiteRow) string {
 		return ""
 	}
 	return row.Favicon
+}
+
+func existingPRURL(row *SiteRow) string {
+	if row == nil {
+		return ""
+	}
+	return row.PRURL
 }
 
 func firstNonEmpty(values ...string) string {

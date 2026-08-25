@@ -726,6 +726,16 @@ site-header { display: block; }
   text-transform: uppercase;
 }
 .site-name { font-size: 14px; font-weight: 600; color: var(--ink); line-height: 1.3; }
+
+/* The name is a link only when the row carries the pull request the run was
+   opened as, so it reads as plain text until there is somewhere to go. */
+.site-name a { color: inherit; text-decoration: none; }
+.site-name a:hover,
+.site-name a:focus-visible { text-decoration: underline; }
+.site-name .pr-glyph { margin-left: 6px; vertical-align: -1px; opacity: 0.5; }
+.site-name a:hover .pr-glyph,
+.site-name a:focus-visible .pr-glyph { opacity: 1; }
+
 .site-url { font-size: 11.5px; color: var(--muted); }
 
 .num-cell { font-family: var(--font-mono); font-weight: 600; font-size: 16px; color: var(--ink); }

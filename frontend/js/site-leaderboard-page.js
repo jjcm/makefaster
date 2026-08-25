@@ -41,6 +41,31 @@ const DOWN_ARROW =
   '<svg class="icon" width="10" height="12" viewBox="0 0 10 12" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">' +
   '<path d="M5 0v10M1 7l4 4 4-4"/></svg>';
 
+// Marks the site name as a link to the pull request the run was opened as.
+const PR_GLYPH =
+  '<svg class="icon pr-glyph" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">' +
+  '<circle cx="3" cy="2.6" r="1.5"/><circle cx="3" cy="9.4" r="1.5"/><path d="M3 4.1v3.8"/>' +
+  '<circle cx="9" cy="9.4" r="1.5"/><path d="M9 7.9V4.6a2 2 0 0 0-2-2H5.4"/><path d="M6.7 1.3 5.4 2.6l1.3 1.3"/></svg>';
+
+// Only an http(s) link is ever rendered, so a stored value that is not one
+// cannot become a javascript: URL on a public page.
+const HTTP_URL = /^https?:\/\//i;
+
+/**
+ * The site's name, linked to the pull request that made it faster when the row
+ * has one. Rows submitted before the board stored that link — and any run that
+ * was not opened as a PR — stay plain text rather than pointing nowhere.
+ */
+function siteNameMarkup(row) {
+  var name = escapeHtml(row.name || row.url);
+  var pr = row.prUrl || row.pr;
+  if (!pr || !HTTP_URL.test(pr)) return '<div class="site-name">' + name + "</div>";
+  return (
+    '<div class="site-name"><a href="' + escapeHtml(pr) + '" target="_blank" rel="noopener noreferrer"' +
+    ' title="View the pull request that made this site faster">' + name + PR_GLYPH + "</a></div>"
+  );
+}
+
 /** One stat card of the summary row; `sub` is the caption under the value. */
 function statCard(id, label, glyph, sub) {
   return `
@@ -237,14 +262,14 @@ class SiteLeaderboardPage extends HTMLElement {
       downloadCsv(
         "makefaster-sites-" + self.state.mode + ".csv",
         [
-          "name", "url", "mode",
+          "name", "url", "pr_url", "mode",
           "lcp_before_ms", "lcp_after_ms", "lcp_improvement_pct",
           "tti_before_ms", "tti_after_ms", "tti_improvement_pct",
           "tests", "measured_at",
         ],
         self.filtered().map(function (r) {
           return [
-            r.name, r.url, r.mode,
+            r.name, r.url, r.prUrl || r.pr || "", r.mode,
             r.lcpBefore, r.lcpRaw, r.lcpDelta,
             r.ttiBefore, r.ttiRaw, r.ttiDelta,
             r.tests, r.measuredAt,
@@ -397,12 +422,7 @@ class SiteLeaderboardPage extends HTMLElement {
       cell.className = "site-cell";
       cell.appendChild(self.faviconCell(r));
       var meta = document.createElement("div");
-      meta.innerHTML =
-        '<div class="site-name">' +
-        escapeHtml(r.name || r.url) +
-        '</div><div class="site-url">' +
-        escapeHtml(r.url) +
-        "</div>";
+      meta.innerHTML = siteNameMarkup(r) + '<div class="site-url">' + escapeHtml(r.url) + "</div>";
       cell.appendChild(meta);
       siteTd.appendChild(cell);
       tr.appendChild(siteTd);

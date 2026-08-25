@@ -64,7 +64,19 @@ function modePayload(results, mode, siteUrl) {
     ttiDelta,
     ...(results?.site?.name ? { name: results.site.name } : {}),
     ...(results?.site?.favicon ? { favicon: results.site.favicon } : {}),
+    ...(sitePrUrl(results) ? { prUrl: sitePrUrl(results) } : {}),
   };
+}
+
+/**
+ * The pull request the loop's changes were opened as, which the site board
+ * links the site name to. `pr` is read as well as `prUrl` because the server
+ * accepts both spellings and a skill that wrote the short one should not lose
+ * the link.
+ */
+function sitePrUrl(results) {
+  var value = results?.site?.prUrl || results?.site?.pr;
+  return typeof value === "string" && /^https?:\/\//i.test(value.trim()) ? value.trim() : "";
 }
 
 /**
@@ -72,7 +84,9 @@ function modePayload(results, mode, siteUrl) {
  * Both ends of the run are sent — `lcpBefore`/`ttiBefore` are the measured
  * baseline, `lcpRaw`/`ttiRaw` the measurement after the last kept change — and
  * the deltas between them are computed here (percent vs. baseline, negative =
- * faster) so the skill only ever reports raw measurements.
+ * faster) so the skill only ever reports raw measurements. `prUrl` rides along
+ * when the session recorded one; every field but the metrics is optional, so an
+ * older results.json still submits.
  */
 export function buildSitePayloads(results, siteUrl) {
   return ["cold", "warm"]

@@ -74,6 +74,24 @@ test("buildSitePayloads skips incomplete modes and zero baselines", () => {
   assert.equal(buildSitePayloads(null, "example.com").length, 0);
 });
 
+test("buildSitePayloads sends the pull request the run was opened as", () => {
+  const withPr = { ...RESULTS, site: { ...RESULTS.site, prUrl: "  https://github.com/jjcm/n8n/pull/1  " } };
+  for (const payload of buildSitePayloads(withPr, "example.com")) {
+    assert.equal(payload.prUrl, "https://github.com/jjcm/n8n/pull/1");
+  }
+
+  // `pr` is read too, and a value that is not an http(s) URL is dropped rather
+  // than submitted and rejected.
+  const shortField = { ...RESULTS, site: { ...RESULTS.site, pr: "https://github.com/jjcm/dify/pull/1" } };
+  assert.equal(buildSitePayloads(shortField, "example.com")[0].prUrl, "https://github.com/jjcm/dify/pull/1");
+
+  const bogus = { ...RESULTS, site: { ...RESULTS.site, prUrl: "javascript:alert(1)" } };
+  assert.equal("prUrl" in buildSitePayloads(bogus, "example.com")[0], false);
+
+  // A results.json written before the field existed still submits.
+  assert.equal("prUrl" in buildSitePayloads(RESULTS, "example.com")[0], false);
+});
+
 test("buildImprovementsPayload keeps only kept iterations with deltas, anonymously", () => {
   const payload = buildImprovementsPayload(RESULTS);
   assert.equal(payload.improvements.length, 2); // kept:false and no-delta entries dropped
