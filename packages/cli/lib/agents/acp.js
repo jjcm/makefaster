@@ -18,6 +18,7 @@
 import { createJsonRpcChild } from "../jsonrpc.js";
 import { buildAgentSpawn, isAuthRequiredError } from "../invoke.js";
 import { classifyEvent } from "../progress.js";
+import { thinkingTextOf } from "../thinkingTrace.js";
 
 const ACP_PROTOCOL_VERSION = 1;
 const CLIENT_INFO = { name: "makefaster", version: "1.0.0" };
@@ -54,6 +55,9 @@ export async function runAcpSession({ provider, prompt, cwd, model = null, env =
     label: `${provider.displayName} (acp)`,
     onNotification: (method, params) => {
       if (method !== "session/update") return;
+      // The thought chunk's own text, which the classifier reduces to the word
+      // "thinking" — kept for the trace, shown nowhere.
+      reporter.thought?.(thinkingTextOf("acp", params?.update));
       reporter.update(classifyEvent("acp", params?.update));
     },
     onRequest: (method, params, responder) => {
