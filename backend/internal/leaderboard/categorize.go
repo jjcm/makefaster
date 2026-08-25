@@ -126,14 +126,29 @@ func foldIntoCategory(category *Category, improvement Improvement) {
 		previous := category.AvgImprovementPct
 		category.AvgImprovementPct = roundPct((previous*previousCount + improvement.DeltaPct) / (previousCount + 1))
 	}
+	category.Description = foldedDescription(*category, improvement)
+}
+
+// foldedDescription decides what a row says after a submission folds into it.
+// The row's own text wins whenever it is already a technique: a fold is one
+// more site reporting the same win, and letting the newest submitter overwrite
+// the blurb would put whichever repo submitted last on the public board. A row
+// that still carries a site-specific description — every row created before
+// this rule existed — is upgraded instead, but only to text that is actually
+// generic.
+func foldedDescription(category Category, improvement Improvement) string {
+	if IsGenericDescription(category.Description) {
+		return category.Description
+	}
+	if upgraded := GenericCategoryDescription(category.Name, improvement.Description); IsGenericDescription(upgraded) {
+		return upgraded
+	}
+	return category.Description
 }
 
 func createCategoryFrom(improvement Improvement) Category {
 	name := GenericCategoryName(improvement.Name)
-	description := truncate(strings.TrimSpace(improvement.Description), categoryDescriptionMax)
-	if description == "" {
-		description = "Community-submitted: " + name
-	}
+	description := GenericCategoryDescription(name, improvement.Description)
 	category := Category{
 		Rank:        0, // assigned by RerankCategories below
 		Name:        name,
@@ -187,7 +202,9 @@ func compareNames(a, b string) int {
 //
 // Every submitted name is first reduced to a generic technique name
 // (GenericCategoryName), so the site-specific detail a submitter put in the
-// name cannot become a row of its own. That name then decides the fold:
+// name cannot become a row of its own — and the description the row stores goes
+// through the same treatment (GenericCategoryDescription), so it cannot become
+// one repo's changelog either. That name then decides the fold:
 //
 //   - a category whose name keys the same (categoryKey) is the same technique
 //     worded differently -> fold into it, no embedding needed;
