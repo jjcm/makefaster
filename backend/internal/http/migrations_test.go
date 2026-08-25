@@ -62,7 +62,7 @@ func databaseAtVersion(t *testing.T, version int64) *sql.DB {
 	}
 	t.Cleanup(func() { pool.Close() })
 
-	for _, table := range []string{"sites", "improvement_categories", "tips", "goose_db_version"} {
+	for _, table := range []string{"sites", "improvement_categories", "tips", "traces", "goose_db_version"} {
 		if _, err := pool.Exec("DROP TABLE IF EXISTS " + table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}

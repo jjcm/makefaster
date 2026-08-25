@@ -17,6 +17,12 @@ const (
 	DefaultFrontendDir   = "../frontend"
 	DefaultSeedDir       = "../data"
 
+	// Where the private chain-of-thought traces are stored. Outside the repo
+	// and outside FRONTEND_DIR on purpose: the one thing that must never
+	// happen to a trace is being served as a static file. Setting
+	// MAKEFASTER_TRACE_DIR to "off" turns collection off entirely.
+	DefaultTraceDir = "/var/lib/makefaster/traces"
+
 	DefaultEmbeddingsModel   = "text-embedding-3-small"
 	DefaultEmbeddingsBaseURL = "https://api.openai.com/v1"
 
@@ -57,8 +63,16 @@ type Config struct {
 	MigrationsDir string
 	FrontendDir   string
 	SeedDir       string
+	TraceDir      string
 	Embeddings    Embeddings
 	Inference     Inference
+}
+
+// TracesEnabled reports whether this deployment collects chains of thought. An
+// explicit "off" (or an empty value) means it does not, and
+// POST /api/submit-trace answers 503 saying so.
+func (c Config) TracesEnabled() bool {
+	return c.TraceDir != "" && !strings.EqualFold(c.TraceDir, "off")
 }
 
 // Addr is the host:port passed to net/http.
@@ -75,6 +89,7 @@ func Load() Config {
 		MigrationsDir: envString("MIGRATIONS_DIR", DefaultMigrationsDir),
 		FrontendDir:   envString("FRONTEND_DIR", DefaultFrontendDir),
 		SeedDir:       envString("SEED_DIR", DefaultSeedDir),
+		TraceDir:      envString("MAKEFASTER_TRACE_DIR", DefaultTraceDir),
 		Embeddings:    loadEmbeddings(),
 		Inference:     loadInference(),
 	}

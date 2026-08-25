@@ -12,9 +12,15 @@
 //	                                optional private tips for the catalog
 //	                                maintainers (stored, never served)
 //	POST /api/submit-improvements    anonymous improvements, embedding-matched
+//	POST /api/submit-trace          one run's chain of thought, stored privately
+//	                                and served by nothing (see internal/trace)
 //	POST /api/openrouter/v1/chat/completions
 //	                                the subsidized model proxy the CLI's
 //	                                `makefaster` provider runs on
+//
+// There is no GET counterpart to submit-trace, and adding one would be a
+// mistake rather than a feature: unknown GET paths under /api/ answer 404 so
+// that a route nobody wrote cannot become a route the SPA shell answers.
 package httpapi
 
 import (
@@ -23,6 +29,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +37,7 @@ import (
 	"makefaster/internal/inference"
 	"makefaster/internal/leaderboard"
 	"makefaster/internal/store"
+	"makefaster/internal/trace"
 )
 
 const (
@@ -46,6 +54,13 @@ const (
 	// The proxy's own body ceiling. A conversation with a few files in it is
 	// large, but not this large, and the request is read into memory.
 	inferenceBodyLimitBytes = 1024 * 1024
+
+	// A trace is a session's reasoning plus its iteration list, which is more
+	// than a leaderboard row and much less than a conversation. The per-block,
+	// per-trace and total caps in internal/trace do the real work; this is the
+	// outer wall, so a client that ignores them is refused before the body is
+	// read rather than after.
+	traceBodyLimitBytes = 512 * 1024
 )
 
 type Server struct {
@@ -55,6 +70,10 @@ type Server struct {
 	frontendDir string
 	logger      *slog.Logger
 	inference   *inference.Proxy
+
+	// traces is the private trace store. Nil is a supported state: the
+	// deployment collects no traces and POST /api/submit-trace answers 503.
+	traces *trace.Vault
 
 	limiter          *rateLimiter
 	inferenceLimiter *rateLimiter
@@ -75,6 +94,10 @@ type Options struct {
 	// Inference is optional: a nil proxy answers the inference route with the
 	// same 503 an unconfigured credential does.
 	Inference *inference.Proxy
+
+	// Traces is optional in the same way: a nil vault means this deployment
+	// stores no chains of thought, and says so.
+	Traces *trace.Vault
 }
 
 func NewServer(opts Options) *Server {
@@ -93,6 +116,7 @@ func NewServer(opts Options) *Server {
 		frontendDir:      opts.FrontendDir,
 		logger:           logger,
 		inference:        proxy,
+		traces:           opts.Traces,
 		limiter:          newRateLimiter(rateLimitMaxPosts),
 		inferenceLimiter: newRateLimiter(inferenceRateLimitMax),
 	}
@@ -120,6 +144,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 			s.handleSubmitSite(w, r)
 		case "/api/submit-improvements":
 			s.handleSubmitImprovements(w, r)
+		case "/api/submit-trace":
+			s.handleSubmitTrace(w, r)
 		case "/api/openrouter/v1/chat/completions":
 			s.handleInferenceChat(w, r)
 		default:
@@ -146,6 +172,15 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 				},
 			})
 		default:
+			// Everything under /api/ that is not a route above is a 404, not
+			// the SPA shell. The write endpoints store things that are never
+			// meant to be read back — private catalog tips, chains of thought —
+			// so "no GET exists for that" has to be the answer here, not an
+			// accident of the static fallback.
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				s.writeJSON(w, http.StatusNotFound, errorBody("unknown endpoint"))
+				return
+			}
 			s.serveStatic(w, r)
 		}
 
@@ -309,12 +344,91 @@ func (s *Server) foldImprovements(r *http.Request, improvements []leaderboard.Im
 	return results, nil
 }
 
+// submitTraceResponse acknowledges a stored chain of thought. It reports what
+// was kept and what had to be clamped, and nothing about where it went: the
+// server's filesystem layout is not the client's business, and there is no
+// endpoint that would read the document back anyway.
+type submitTraceResponse struct {
+	OK             bool     `json:"ok"`
+	RunID          string   `json:"runId"`
+	ThinkingBlocks int      `json:"thinkingBlocks"`
+	ThinkingChars  int      `json:"thinkingChars"`
+	Iterations     int      `json:"iterations,omitempty"`
+	Truncated      []string `json:"truncated,omitempty"`
+}
+
+// handleSubmitTrace stores one run's chain of thought.
+//
+// This endpoint is write-only in the strongest sense the server has: the
+// document lands under a private directory (0700/0600) plus an index row, and
+// nothing serves either. It is not on a board, not in GET /data/*.json, and not
+// in the checklist the CLI imports — that list comes from the improvement
+// categories and only from them.
+//
+// It is also never the consequence of another answer. The CLI asks for a trace
+// as its own question, after the results question has been answered, and
+// defaults it to no; this handler's job is to hold up that promise on the
+// server side by storing what arrives and publishing none of it.
+func (s *Server) handleSubmitTrace(w http.ResponseWriter, r *http.Request) {
+	if s.traces == nil {
+		s.writeJSON(w, http.StatusServiceUnavailable, errorBody(
+			"this deployment does not collect chains of thought (MAKEFASTER_TRACE_DIR is unset)"))
+		return
+	}
+	body, ok := s.readBody(w, r)
+	if !ok {
+		return
+	}
+	submission, err := trace.DecodeSubmission(body, time.Now())
+	if err != nil {
+		var validation *trace.ValidationError
+		if errors.As(err, &validation) {
+			s.writeJSON(w, http.StatusBadRequest, errorPayload{OK: false, Errors: validation.Errors})
+			return
+		}
+		s.fail(w, err)
+		return
+	}
+
+	record, err := s.traces.Save(r.Context(), submission, true)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+
+	status := http.StatusOK
+	if record.Created {
+		status = http.StatusCreated
+	}
+	// The log line counts; it never carries the reasoning itself.
+	s.logger.Info("submit-trace",
+		"runId", record.RunID,
+		"agent", submission.Agent,
+		"blocks", record.ThinkingBlocks,
+		"chars", record.ThinkingChars,
+		"iterations", record.Iterations,
+		"resultsSubmitted", submission.ResultsSubmitted,
+		"created", record.Created)
+	s.writeJSON(w, status, submitTraceResponse{
+		OK:             true,
+		RunID:          record.RunID,
+		ThinkingBlocks: record.ThinkingBlocks,
+		ThinkingChars:  record.ThinkingChars,
+		Iterations:     record.Iterations,
+		Truncated:      record.Truncated,
+	})
+}
+
 // readBody reads at most 256 KB of request body, answering 413 beyond that —
-// except on the inference route, whose payload is a whole conversation.
+// except on the inference route, whose payload is a whole conversation, and the
+// trace route, whose payload is a session's reasoning.
 func (s *Server) readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	limit := bodyLimitBytes
-	if r.URL.Path == "/api/openrouter/v1/chat/completions" {
+	switch r.URL.Path {
+	case "/api/openrouter/v1/chat/completions":
 		limit = inferenceBodyLimitBytes
+	case "/api/submit-trace":
+		limit = traceBodyLimitBytes
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, int64(limit)+1))
 	if err != nil {

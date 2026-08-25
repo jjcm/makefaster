@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"net/http"
 	"os"
@@ -18,6 +19,7 @@ import (
 	httpapi "makefaster/internal/http"
 	"makefaster/internal/inference"
 	"makefaster/internal/store"
+	"makefaster/internal/trace"
 )
 
 func main() {
@@ -66,6 +68,11 @@ func main() {
 			"models", models.Models())
 	}
 
+	// The private trace store. A directory that cannot be prepared is not a
+	// reason to refuse to boot — the leaderboards are the product — so the
+	// endpoint answers 503 and the reason is logged once, here.
+	traces := openTraceVault(cfg, pool, logger)
+
 	server := httpapi.NewServer(httpapi.Options{
 		Store:       leaderboards,
 		Embedder:    embedder,
@@ -73,6 +80,7 @@ func main() {
 		FrontendDir: cfg.FrontendDir,
 		Logger:      logger,
 		Inference:   models,
+		Traces:      traces,
 	})
 
 	logger.Info("makefaster server listening",
@@ -93,4 +101,24 @@ func main() {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+// openTraceVault prepares the private chain-of-thought store, or returns nil
+// when this deployment does not collect traces or cannot write where it was
+// told to. Nil is what makes POST /api/submit-trace answer 503 with the fix.
+func openTraceVault(cfg config.Config, pool *sql.DB, logger *slog.Logger) *trace.Vault {
+	if !cfg.TracesEnabled() {
+		logger.Info("chain-of-thought traces are off; POST /api/submit-trace will answer 503",
+			"traceDir", cfg.TraceDir)
+		return nil
+	}
+	vault, err := trace.NewVault(cfg.TraceDir, pool, logger)
+	if err != nil {
+		logger.Warn("could not prepare the trace directory; POST /api/submit-trace will answer 503",
+			"traceDir", cfg.TraceDir, "error", err)
+		return nil
+	}
+	logger.Info("chain-of-thought traces are stored privately and served by nothing",
+		"traceDir", vault.Dir())
+	return vault
 }
