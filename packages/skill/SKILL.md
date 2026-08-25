@@ -149,6 +149,16 @@ time. For each one:
 1. **Check whether it is viable in this codebase** — a few minutes of reading,
    not an iteration. Is the thing already done? Does the stack even have this
    surface? Is it plausibly on the critical path here?
+
+   **Probe once, decide many.** Several checklist rows are answered by the same
+   thirty-second look, so take that look during the baseline and reuse it: one
+   request for the entry page and its heaviest assets with an
+   `Accept-Encoding: gzip, br` header answers every compression row
+   (`content-encoding` present or not), and the same response headers answer
+   the caching rows (`cache-control`, `etag`, content-hashed filenames). Do not
+   re-derive the same fact one category at a time — the self-hosted apps that
+   land here most often have no compression and no cache headers at all, and
+   one probe tells you that up front.
 2. **Not viable → skip it, and say why.** Report
    `[SKIP] <category> — <one reason>` and move to the next category. A skip is
    not a run: it costs no measurement, gets no row and no timing bar. Never
@@ -163,6 +173,44 @@ time. For each one:
      count, same conditions, median again. Never compare a 1-run number to a
      3-run median.
    - **Keep or revert, by the numbers** (below).
+
+### After a keep, skip what it subsumes
+
+Some checklist rows are the same technique under an older or narrower name,
+and keeping the broad one answers the narrow ones. **After a keep, skip any
+later row the kept change already covers**, with a `[SKIP]` that names the
+keep: if you kept **Precompress Static Assets**, every later compression row —
+`Enable Gzip Compression`, `Enable Brotli Compression`, `Gzip / Brotli
+Compression` — is done; report
+`[SKIP] Enable Gzip Compression — covered by the precompression keep` and move
+on. The same applies whenever one keep plainly implements a later row (an
+inlined-stylesheet keep answers a remove-render-blocking-CSS row for the same
+stylesheet). A checklist row may carry a `subsumes` list naming the rows it
+covers — trust it — but the rule holds with or without the field.
+
+This is a subsumption judgement, not a shortcut: skip a row because the kept
+change already did it, never because it looks similar to something that
+missed.
+
+### When the LCP surface is a prebuilt artifact
+
+Some repos serve their entry page from a prebuilt artifact the repo does not
+build: a dashboard tarball downloaded at build time, a vendored `web-vault`
+bundle, a prebuilt workbench, a compiled SPA committed as static files. If the
+page's LCP surface is one of those, **you cannot rebuild the JS/CSS/fonts
+inside it, so do not spend the walk trying**. Only attempt the checklist rows
+you can actually change from this repo's server side:
+
+- **compression** (precompressed siblings or runtime compression),
+- **cache headers** (immutable hashed assets, HTML freshness, ETags),
+- **the HTML document / shell itself** when the server template is in-repo.
+
+Skip every SPA-internal row — lazy-loading, bundle splitting, font subsetting,
+unused CSS, minification *inside* the artifact — each with a one-line reason:
+`[SKIP] Lazy-Load Components — the dashboard is a prebuilt artifact this repo
+does not build`. Editing compiled bundle output by hand is not a keep: it
+cannot be reproduced by the repo's own build, so it is a change the next
+release erases.
 
 ### 2b. Then up to five of your own
 
@@ -353,6 +401,41 @@ Five keeps of which four are generic is `genericKeepPct: 80`,
 CLI submits them with the site stats, and the site leaderboard shows how much of
 the run was reusable technique. A run that kept nothing has no split to report.
 
+## Tips — private notes to the catalog maintainers
+
+The checklist itself is maintained by people (the Speed Lab) who fold
+duplicate rows, scrub site-specific copy, and reorder what stopped earning its
+rank — the compression triplet was folded into one row exactly because runs
+kept reporting the same overlap. **After the run, leave 0–10 short tips about
+the catalog** in a top-level `tips` array in `results.json`:
+
+```json
+"tips": [
+  { "text": "Enable Gzip Compression and Enable Brotli Compression read as duplicates of Precompress Static Assets — every keep on one made the other two skips.", "about": "catalog" },
+  { "text": "The LCP surface here was a prebuilt dashboard tarball; only the server-side rows were actionable. A prebuilt-SPA note on the JS/CSS rows would have saved three viability checks.", "about": "Lazy-Load Components" }
+]
+```
+
+- `text` — one note, up to 280 characters. Write it **to the catalog
+  maintainer, not to a user**: "this row duplicates rank 2", "this row never
+  applies when the SPA is prebuilt", "this description reads as a recipe".
+- `about` — optional: the category name the note is about, or `"catalog"` for
+  the board as a whole.
+
+Rules, because tips are the one channel that is not public:
+
+- Tips are **submitted with the site stats and stored privately**. They never
+  appear on makefaster.dev, never in the public JSON, never in the checklist
+  another agent imports, and never on the user's screen. Do not repeat a tip
+  in `thinking.log` or anywhere user-facing.
+- Tips are **about the catalog**, not about your site. A finding about this
+  repo goes in `iterations[].notes`; a technique goes in the iteration itself.
+  The tip channel is for "here is how the checklist could waste less of the
+  next walk".
+- **No secrets, no repo internals.** The same hygiene as a description: a tip
+  that only makes sense with your source tree open is a note, not a tip.
+- Zero tips is fine. Do not pad.
+
 ## Naming the site — the product, not your deployment
 
 `site.name` is the row's title on the public site leaderboard, so it is the
@@ -507,6 +590,9 @@ milliseconds. Deltas are negative when the site got faster.
   ],
   "genericKeepPct": 50,
   "siteSpecificKeepPct": 50,
+  "tips": [
+    { "text": "Preload LCP Image never applied on the three text-LCP sites I have walked; a text-LCP note on the row would save a viability check.", "about": "Preload LCP Image" }
+  ],
   "stoppedReason": "checklist-complete"
 }
 ```
@@ -565,6 +651,10 @@ Field notes:
 - `genericKeepPct` / `siteSpecificKeepPct` — the split above, over kept
   iterations only, as whole percents that add to 100. Submitted with the site
   stats. Leave both out when the run kept nothing.
+- `tips` — optional, up to 10 notes to the catalog maintainers (see "Tips —
+  private notes to the catalog maintainers"). Submitted with the site stats,
+  stored privately, never displayed anywhere. Leave it out when you have
+  nothing to say about the catalog.
 - `iterations[].phase` — `"checklist"` for a category that came off the imported
   board, `"extra"` for one of your own. This is how the end screen shows how far
   down the checklist the run actually got, so a session that stopped early cannot
