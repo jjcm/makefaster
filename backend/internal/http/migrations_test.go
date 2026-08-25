@@ -3,8 +3,11 @@ package httpapi_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"math"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pressly/goose/v3"
@@ -199,7 +202,10 @@ func TestRenameMigrationFoldsTheLiveBoardOntoGenericNames(t *testing.T) {
 			t.Errorf("%q kept the wrong numbers: got %+v, want count=%d ms=%d pct=%v",
 				generic, row, was.Count, was.AvgImprovementMs, was.AvgImprovementPct)
 		}
-		if row.Description != was.Description {
+		// The rename keeps whatever the row said; the description backfill that
+		// follows it (migration 00004) replaces the ones it recognizes with the
+		// technique blurb. Anything else means a row lost its text.
+		if row.Description != was.Description && row.Description != leaderboard.CatalogDescription(generic) {
 			t.Errorf("%q lost its description: got %q", generic, row.Description)
 		}
 	}
@@ -282,6 +288,151 @@ func TestBeforeMetricsMigrationBackfillsFromTheRecordedDelta(t *testing.T) {
 			t.Errorf("%s lost its after values: %+v", row.url, got)
 		}
 	}
+}
+
+// liveDescriptions is backend/testdata/category_descriptions.json: every row of
+// GET /data/improvements.json with the changelog it carried and the technique
+// blurb migration 00004 replaces it with.
+func liveDescriptions(t *testing.T) []struct {
+	Name string `json:"name"`
+	Was  string `json:"was"`
+	Now  string `json:"now"`
+} {
+	t.Helper()
+	path := filepath.Join("..", "..", "testdata", "category_descriptions.json")
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var rows []struct {
+		Name string `json:"name"`
+		Was  string `json:"was"`
+		Now  string `json:"now"`
+	}
+	if err := json.Unmarshal(contents, &rows); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	return rows
+}
+
+// The live board, rewritten. Names, counts and averages are what the board
+// earned across every site that reported the technique, so the backfill must
+// touch nothing but the description.
+func TestDescriptionMigrationRewritesTheLiveBoard(t *testing.T) {
+	pool := databaseAtVersion(t, 3)
+	rows := liveDescriptions(t)
+
+	before := make([]leaderboard.Category, 0, len(rows))
+	for i, row := range rows {
+		before = append(before, leaderboard.Category{
+			Rank: i + 1, Name: row.Name, Description: row.Was,
+			Count: len(rows) - i, AvgImprovementMs: -100 * (i + 1),
+			AvgImprovementPct: -1.5 * float64(i+1), Icon: "default",
+		})
+	}
+	if err := store.New(pool).ReplaceCategories(context.Background(), before); err != nil {
+		t.Fatalf("load the pre-backfill board: %v", err)
+	}
+
+	if err := db.Migrate(pool, migrationsDir); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	after, err := store.New(pool).Categories(context.Background())
+	if err != nil {
+		t.Fatalf("read categories: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("expected %d categories, got %d", len(before), len(after))
+	}
+
+	byName := categoriesByName(after)
+	for i, row := range rows {
+		got, found := byName[row.Name]
+		if !found {
+			t.Errorf("%q is missing after the backfill", row.Name)
+			continue
+		}
+		if got.Description != row.Now {
+			t.Errorf("%q description: got %q, want %q", row.Name, got.Description, row.Now)
+		}
+		if got != (leaderboard.Category{
+			Rank: got.Rank, Name: before[i].Name, Description: row.Now,
+			Count: before[i].Count, AvgImprovementMs: before[i].AvgImprovementMs,
+			AvgImprovementPct: before[i].AvgImprovementPct, Icon: before[i].Icon,
+		}) {
+			t.Errorf("%q changed more than its description: got %+v, want %+v", row.Name, got, before[i])
+		}
+	}
+}
+
+// A row someone has already described as a technique is not rewritten, so
+// re-running the backfill — or running it after ingest has upgraded a row — is
+// a no-op.
+func TestDescriptionMigrationLeavesGenericDescriptionsAlone(t *testing.T) {
+	pool := databaseAtVersion(t, 3)
+	leaderboards := store.New(pool)
+
+	original := []leaderboard.Category{
+		{Rank: 1, Name: "Lazy-Load Components", Description: "Load panes, modals, and editors only when opened", Count: 118, AvgImprovementMs: -59, AvgImprovementPct: -4.9, Icon: "default"},
+		{Rank: 2, Name: "Enable Gzip Compression", Description: leaderboard.CatalogDescription("Enable Gzip Compression"), Count: 4, AvgImprovementMs: -2995, AvgImprovementPct: -33.9, Icon: "default"},
+		{Rank: 3, Name: "Image Optimization", Description: "Compress and resize images", Count: 312, AvgImprovementMs: -265, AvgImprovementPct: -17.3, Icon: "image"},
+	}
+	if err := leaderboards.ReplaceCategories(context.Background(), original); err != nil {
+		t.Fatalf("load board: %v", err)
+	}
+	if err := db.Migrate(pool, migrationsDir); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	after, err := leaderboards.Categories(context.Background())
+	if err != nil {
+		t.Fatalf("read categories: %v", err)
+	}
+	for i, category := range after {
+		if category != original[i] {
+			t.Errorf("row %d changed: got %+v, want %+v", i, category, original[i])
+		}
+	}
+}
+
+// Rolling the backfill back puts the original text on every row that still
+// carries the blurb it wrote.
+func TestDescriptionMigrationRollsBack(t *testing.T) {
+	pool := databaseAtVersion(t, 3)
+	rows := liveDescriptions(t)
+
+	before := make([]leaderboard.Category, 0, len(rows))
+	for i, row := range rows {
+		before = append(before, leaderboard.Category{
+			Rank: i + 1, Name: row.Name, Description: row.Was, Count: 1, Icon: "default",
+		})
+	}
+	if err := store.New(pool).ReplaceCategories(context.Background(), before); err != nil {
+		t.Fatalf("load the pre-backfill board: %v", err)
+	}
+	if err := db.Migrate(pool, migrationsDir); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if err := goose.Down(pool, migrationsDir); err != nil {
+		t.Fatalf("roll back: %v", err)
+	}
+
+	byName := categoriesByName(mustCategories(t, pool))
+	for _, row := range rows {
+		if got := byName[row.Name].Description; got != strings.TrimSpace(row.Was) {
+			t.Errorf("%q was not restored: got %q, want %q", row.Name, got, strings.TrimSpace(row.Was))
+		}
+	}
+}
+
+func mustCategories(t *testing.T, pool *sql.DB) []leaderboard.Category {
+	t.Helper()
+	categories, err := store.New(pool).Categories(context.Background())
+	if err != nil {
+		t.Fatalf("read categories: %v", err)
+	}
+	return categories
 }
 
 // Running the rename against a board that holds nothing to rename must be a
