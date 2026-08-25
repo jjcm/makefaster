@@ -28,21 +28,28 @@ npx makefaster            # or: npx github:jjcm/makefaster
 
 What happens:
 
-1. **Detects the agent CLIs you already have** — Cursor Agent
-   (`cursor-agent`/`agent`), Claude Code (`claude`), Codex (`codex`) — via
-   PATH, well-known install locations (`~/.local/bin`, `~/.claude/local`,
-   `~/.cursor/bin`, Homebrew…), and explicit env overrides
-   (`CURSOR_AGENT_EXECUTABLE`, `CLAUDE_CODE_EXECUTABLE` /
-   `BB_CLAUDE_CODE_EXECUTABLE`, `CODEX_EXECUTABLE`). makefaster never bundles
-   or downloads a model; it drives your existing install. If none are found
-   it prints the real installers and exits.
-2. **Asks you to pick** among the CLIs actually found — before anything runs.
+1. **Offers its own hosted model first, then the agent CLIs you already have.**
+   **Makefaster** (`--cli makefaster`) needs nothing installed and no account:
+   the model runs through `makefaster.dev`, which holds the OpenRouter
+   credential and proxies chat completions, so the CLI never sees a key. Its
+   model is pinned server-side to `stealth/ox-alpha`, so there is nothing to
+   pick. Then the local ones, detected via PATH, well-known install locations
+   (`~/.local/bin`, `~/.claude/local`, `~/.cursor/bin`, Homebrew…) and explicit
+   env overrides (`CURSOR_AGENT_EXECUTABLE`, `CLAUDE_CODE_EXECUTABLE` /
+   `BB_CLAUDE_CODE_EXECUTABLE`, `CODEX_EXECUTABLE`): Cursor Agent
+   (`cursor-agent`/`agent`), Claude Code (`claude`), Codex (`codex`).
+   makefaster never bundles or downloads a model.
+2. **Asks you to pick** — the hosted option first and pre-selected, then
+   whichever CLIs were actually found. Before anything runs.
 3. **Asks you to pick a model** — five per provider, ranked by intelligence
-   (see [Model picker](#model-picker)). `--model <id>` skips the picker.
-4. **Reuses the sign-in you already have.** makefaster never runs a `login`,
-   opens a browser, prints a device code, or injects an API key; a signed-out
-   install fails with the CLI's own auth error and makefaster reports it in one
-   line pointing at the native `login` command.
+   (see [Model picker](#model-picker)). `--model <id>` skips the picker, and
+   the hosted provider skips it entirely because its model is pinned.
+4. **Reuses the sign-in you already have.** For a local CLI, makefaster never
+   runs a `login`, opens a browser, prints a device code, or injects an API key;
+   a signed-out install fails with the CLI's own auth error and makefaster
+   reports it in one line pointing at the native `login` command. For the hosted
+   provider there is nothing to sign into — but a deployment with no credential
+   configured is reported before the run starts, not three minutes into it.
 5. **Imports the improvement checklist** — up to the top 50 categories from the
    live leaderboard, falling back to the technique catalog bundled at
    [`packages/cli/data/improvements.json`](packages/cli/data/improvements.json)
@@ -72,8 +79,11 @@ What happens:
 
 ```text
 Usage: npx makefaster [dir] [options]
-  --cli <cursor|claude|codex>   Skip the provider picker
-  --model <id>                  Skip the model picker
+  --cli <makefaster|cursor|claude|codex>
+                                Skip the picker ("makefaster" = the hosted
+                                model, no local CLI or key needed)
+  --model <id>                  Skip the model picker (unused by --cli
+                                makefaster, whose model is pinned)
   --url <example.com>           Site URL for the leaderboard submission
   --api <base>                  Leaderboard API base (default https://makefaster.dev)
   --improvements <path|url>     Override the checklist source
@@ -130,8 +140,9 @@ protocol frames into, never your terminal — attaching it is what otherwise mak
 these CLIs decide a human is present and start asking for login, workspace
 trust, and per-tool permission.
 
-| CLI | How makefaster drives it |
+| Agent | How makefaster drives it |
 |---|---|
+| Makefaster (hosted) | no child at all — the loop runs in this process against the server's model proxy, with makefaster's own tools |
 | Cursor Agent | `cursor-agent --model <id> acp` — Agent Client Protocol over stdio |
 | Claude Code | `@anthropic-ai/claude-agent-sdk` `query()`, which owns the CLI pipe itself; print mode is the zero-dependency fallback |
 | Codex | `codex app-server` — JSON-RPC; the model rides `thread/start` |
@@ -142,6 +153,16 @@ belong to other agents — and neither does the app-server. So **makefaster answ
 the child's permission requests itself**: ACP `session/request_permission`,
 Claude's `canUseTool`, and Codex's three `requestApproval` methods. Without that
 a hidden child would block forever on a question with no UI to ask it in.
+
+The hosted provider is the exception to all of it: there is no vendor CLI to
+hide, because there is no vendor CLI. makefaster holds the conversation itself
+([`packages/cli/lib/agents/openrouter.js`](packages/cli/lib/agents/openrouter.js))
+and gives the model a small, bounded toolset
+([`tools.js`](packages/cli/lib/agents/tools.js)): list, read, write, edit, run a
+shell command, and report a step to the dashboard. Every path is scoped to the
+target directory — a path that resolves outside it is refused — every command is
+non-interactive with a timeout, and every result is truncated before it becomes
+prompt. The CLI sends no credential and names no model: both live on the server.
 
 Claude Code is the one provider where a protocol client is a dependency rather
 than a subprocess, so the Agent SDK is an optional peer: if it resolves,
@@ -305,6 +326,7 @@ start empty and grow as loops report results:
 | `GET /api/health` | `{ ok, embedder, threshold }` | — |
 | `POST /api/submit-site` | `{ url, favicon?, name?, prUrl?, genericKeepPct?, siteSpecificKeepPct?, lcpBefore?, lcpRaw, lcpDelta, ttiBefore?, ttiRaw, ttiDelta, mode: cold\|warm }` — upserts the site's row; URL + favicon shown publicly, `name` reduced to the product's own name, `prUrl` (or `pr`) linked from it | `MakefasterAPI.submitSite(payload)` |
 | `POST /api/submit-improvements` | `{ improvements: [{ name, description?, deltaMs?, deltaPct? }] }` — anonymous; names and descriptions are normalized to generic techniques and embedding-matched into categories | `MakefasterAPI.submitImprovements(payload)` |
+| `POST /api/openrouter/v1/chat/completions` | OpenAI-compatible chat completions for the CLI's hosted provider, proxied to OpenRouter under the server's own credential | — |
 
 Each metric has both ends of the run: `lcpRaw`/`ttiRaw` are the measurement
 after the last kept change, `lcpBefore`/`ttiBefore` the pre-loop baseline, and
@@ -338,6 +360,33 @@ folded a new run into an existing one, both as `{ ok, created, row }`; invalid
 payloads come back as `400 { ok: false, errors: [...] }`. Writes are serialized,
 POSTs are rate limited to 60/minute/IP, bodies are capped at 256 KB, and every
 response carries permissive CORS so the SPA can be hosted anywhere.
+
+### The hosted model proxy
+
+`POST /api/openrouter/v1/chat/completions` is what the CLI's `makefaster`
+provider runs on. It exists so that a machine with none of the three agent CLIs
+installed can still run the loop: the server holds `OPENROUTER_API_KEY`, the CLI
+holds a URL, and chat completions are forwarded on its behalf. **The credential
+never leaves the box** — it is in no response body, no error string and no log
+line, and responses are scrubbed on the way out as a backstop.
+
+Which makes it the one endpoint here that spends money per request, so it is
+deliberately narrow ([`backend/internal/inference`](backend/internal/inference)):
+
+- the **model is pinned** to `stealth/ox-alpha` server-side. Whatever the client
+  sends is discarded, so nobody can spend the credential on a model nobody chose;
+- **`max_tokens` is clamped** (8192) and **streaming is refused**, so one request
+  cannot run away;
+- a request with **no messages is rejected** before it costs anything, as is any
+  `api_key`/`authorization` field a client tries to smuggle upstream;
+- it is **rate limited per IP on its own budget** (30/minute), separate from the
+  leaderboard writes, and the 429 says why;
+- with **no credential configured it answers 503** with the fix, rather than
+  failing obscurely — and `GET /api/health` reports
+  `inference: { available, model }` so the CLI can say so before a run starts.
+
+Set the key at deploy time; there is none in this repo, and the tests use an
+`httptest` upstream and a placeholder string.
 
 ### Embeddings
 

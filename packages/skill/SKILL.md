@@ -5,12 +5,23 @@ description: Autoresearch loop that makes the site in this repo measurably faste
 
 # The makefaster loop
 
-You are running inside a makefaster session: the `makefaster` CLI detected the
-agent CLI you are, asked the user to pick you, and handed you this repo. Your
-job is to make the site in the current directory measurably faster for real
+You are running inside a makefaster session: the `makefaster` CLI asked the user
+which agent should run the loop and handed you this repo. You are either the
+agent CLI they already had installed, or the hosted model makefaster runs itself
+(`stealth/ox-alpha`, served through makefaster.dev) — the loop is identical
+either way, and so is this file.
+
+Your job is to make the site in the current directory measurably faster for real
 users, one disciplined experiment at a time. The discipline is the same as
 jjcm/speedupskill: **measure a user-felt metric first, change one hypothesis
 per iteration, keep or revert with numbers.**
+
+If you are the hosted model, you have a fixed toolset rather than a whole agent
+product: list, read, write and edit files, run a shell command, and
+`report_step`. Use `report_step` for the reporting contract below — it appends
+the line for you — and `run_shell` for everything a build, a server or a
+measurement needs. Nothing can prompt you, and there is nobody to ask, so take
+the run to completion in one session.
 
 ## The session contract (files in `.makefaster/`)
 

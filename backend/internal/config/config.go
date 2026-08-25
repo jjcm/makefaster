@@ -19,7 +19,24 @@ const (
 
 	DefaultEmbeddingsModel   = "text-embedding-3-small"
 	DefaultEmbeddingsBaseURL = "https://api.openai.com/v1"
+
+	DefaultOpenRouterBaseURL = "https://openrouter.ai/api/v1"
 )
+
+// Inference configures the subsidized model proxy the `makefaster` provider
+// runs on: the CLI has no vendor CLI and no key of its own, so this server holds
+// the OpenRouter credential and forwards chat completions on its behalf.
+//
+// APIKey empty is a supported state, not a misconfiguration: the provider still
+// appears in the CLI's picker and the proxy answers 503 with an explanation,
+// which is a better failure than a provider that silently is not there.
+type Inference struct {
+	APIKey  string
+	BaseURL string
+}
+
+// Available reports whether the proxy can actually reach OpenRouter.
+func (i Inference) Available() bool { return i.APIKey != "" }
 
 // Embeddings selects the embedding backend. An empty APIKey means the
 // deterministic local feature-hashing embedder.
@@ -41,6 +58,7 @@ type Config struct {
 	FrontendDir   string
 	SeedDir       string
 	Embeddings    Embeddings
+	Inference     Inference
 }
 
 // Addr is the host:port passed to net/http.
@@ -58,6 +76,14 @@ func Load() Config {
 		FrontendDir:   envString("FRONTEND_DIR", DefaultFrontendDir),
 		SeedDir:       envString("SEED_DIR", DefaultSeedDir),
 		Embeddings:    loadEmbeddings(),
+		Inference:     loadInference(),
+	}
+}
+
+func loadInference() Inference {
+	return Inference{
+		APIKey:  envString("OPENROUTER_API_KEY", ""),
+		BaseURL: envString("MAKEFASTER_OPENROUTER_BASE_URL", DefaultOpenRouterBaseURL),
 	}
 }
 

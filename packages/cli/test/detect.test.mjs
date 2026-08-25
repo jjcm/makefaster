@@ -34,18 +34,40 @@ function detect({ env = {}, home, isRoot = false, probeVersion = quietProbe } = 
   });
 }
 
-test("finds all three providers on PATH", () => {
+test("finds all three installed providers on PATH", () => {
   const { root, bin, home } = makeSandbox();
   try {
     fakeBinary(bin, "cursor-agent");
     fakeBinary(bin, "claude");
     fakeBinary(bin, "codex");
     const reports = detect({ env: { PATH: bin }, home });
-    for (const report of reports) {
+    for (const report of reports.filter((r) => !r.hosted)) {
       assert.equal(report.found, true, `${report.key} should be found`);
       assert.equal(report.source, "path");
       assert.equal(report.version, "9.9.9 (test)");
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The hosted provider is not on this machine and never can be: it is offered
+// first, always, with nothing to detect and no version to probe.
+test("the hosted provider is offered first without being detected", () => {
+  const { root, bin, home } = makeSandbox();
+  try {
+    const reports = detect({ env: { PATH: bin }, home });
+    const hosted = reports[0];
+    assert.equal(hosted.key, "makefaster");
+    assert.equal(hosted.hosted, true);
+    assert.equal(hosted.found, true);
+    assert.equal(hosted.source, "hosted");
+    assert.equal(hosted.executablePath, null);
+    assert.equal(hosted.version, null);
+    assert.equal(hosted.hostedModel, "stealth/ox-alpha");
+    assert.match(hosted.detail, /openrouter/i);
+    // And it does not stop the others from being reported as missing.
+    assert.deepEqual(reports.slice(1).map((r) => r.found), [false, false, false]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

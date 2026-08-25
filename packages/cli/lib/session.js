@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { runAcpSession } from "./agents/acp.js";
 import { runClaudeSession } from "./agents/claudeCode.js";
 import { runCodexSession } from "./agents/codexAppServer.js";
+import { runOpenRouterSession } from "./agents/openrouter.js";
 import { createProgressReporter } from "./progress.js";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -128,7 +129,8 @@ export function continuePrompt() {
 }
 
 /**
- * Run one round of the loop in the chosen agent CLI, hidden.
+ * Run one round of the loop in the chosen agent CLI, hidden — or, for the hosted
+ * provider, in this process against the model proxy on the makefaster server.
  *
  * Each provider is a non-TTY protocol child (see lib/invoke.js): ACP for Cursor,
  * the Agent SDK for Claude Code, `codex app-server` for Codex. None of them
@@ -145,12 +147,15 @@ export function continuePrompt() {
  *
  * @returns {Promise<{exitCode: number, stderrTail: string, eventCount: number, lastLabel: string|null, aborted: boolean, authRequired: boolean, detail: string|null}>}
  */
-export async function runAgent({ provider, prompt, cwd, model = null, env = process.env, reporter, signal }) {
+export async function runAgent({ provider, prompt, cwd, model = null, env = process.env, reporter, signal, apiBase }) {
   const progress = reporter ?? createProgressReporter();
   const runners = {
     cursor: runAcpSession,
     claude: runClaudeSession,
     codex: runCodexSession,
+    // The hosted provider needs the server it runs on and the step log it
+    // reports through; it has no executable and no model of its own.
+    makefaster: (args) => runOpenRouterSession({ ...args, apiBase, stepLogPath: sessionPaths(cwd).steps }),
   };
   const runner = runners[provider.key];
   if (!runner) throw new Error(`no protocol runner is defined for provider "${provider.key}"`);

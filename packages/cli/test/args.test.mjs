@@ -50,6 +50,13 @@ test("errors: unknown flag, bad cli, bad max-misses, missing values, extra posit
   assert.match(parseArgs(["a", "b"]).errors[0], /unexpected argument/);
 });
 
+test("--cli accepts the hosted provider under either name", () => {
+  for (const value of ["makefaster", "openrouter", "hosted", "MakeFaster"]) {
+    assert.equal(parseArgs(["--cli", value]).args.cli, "makefaster", value);
+  }
+  assert.match(parseArgs(["--cli", "gemini"]).errors[0], /makefaster, cursor, claude, codex/);
+});
+
 test("help and version flags", () => {
   assert.equal(parseArgs(["-h"]).args.help, true);
   assert.equal(parseArgs(["--version"]).args.version, true);
@@ -57,5 +64,6 @@ test("help and version flags", () => {
   assert.match(USAGE, /--max-misses/);
   assert.match(USAGE, /--model <id>/);
   assert.match(USAGE, /--no-tui/);
-  assert.match(USAGE, /runs hidden/);
+  assert.match(USAGE, /An agent CLI runs\nhidden/);
+  assert.match(USAGE, /--cli <makefaster\|cursor\|claude\|codex>/);
 });
