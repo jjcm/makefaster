@@ -16,8 +16,10 @@ const RESULTS = {
     { n: 2, name: "Preload thumbnails", deltaMs: 150, deltaPct: 6.6, kept: false },
     { n: 3, name: "Convert hero to AVIF", deltaMs: -600, deltaPct: -26.3, kept: true },
   ],
-  missStreak: 0,
 };
+
+/** The run plan the CLI writes into state.json (see session.runPlan). */
+const STATE = { round: 1, checklistCount: 24, extrasBudget: 5, plannedRuns: 29 };
 
 const text = (rows) => rows.map(plainText).join("\n");
 
@@ -210,11 +212,9 @@ test("buildDashboard renders all three panels with their real numbers", () => {
   const frame = text(buildDashboard({
     size: { columns: 120, rows: 44 },
     results: RESULTS,
-    state: { round: 1 },
+    state: STATE,
     provider: { displayName: "Cursor Agent" },
     model: { id: "claude-fable-5-max", label: "Claude Fable 5 (max)" },
-    status: "RUNNING",
-    updatedAt: "10:42:32",
     log: [
       { time: "10:42:11", tag: "CHECKLIST", text: "Walking 50 imported categories in rank order." },
       { time: "10:42:12", tag: "TRY", text: "Convert hero to AVIF and preload the hero font" },
@@ -234,27 +234,35 @@ test("buildDashboard renders all three panels with their real numbers", () => {
   assert.match(frame, /\[TRY\]/);
   assert.match(frame, /\[RESULT\]/);
 
-  // Middle panel: loop, experiment, status, metrics, comparison table, footer.
+  // Middle panel: where the loop is, then one table. Every metric is named in
+  // full, once — there is no second copy of the numbers under abbreviations, no
+  // status line, no experiment ids under the headers, and no profiler footer.
   assert.match(frame, /LOOP 003/);
   assert.match(frame, /CURRENT EXPERIMENT: Convert hero to AVIF/);
-  assert.match(frame, /STATUS: RUNNING/);
-  assert.match(frame, /RESULT: IMPROVED/);
-  assert.match(frame, /UPDATED: 10:42:32/);
+  assert.match(frame, /METRIC\s+CANDIDATE\s+BASELINE\s+Δ/);
   assert.match(frame, /PAGE LOAD TIME \(LCP\)\s+1\.68 s\s+2\.42 s\s+-30\.6%/);
-  assert.match(frame, /CANDIDATE/);
-  assert.match(frame, /exp_003/);
-  assert.match(frame, /exp_000/);
-  assert.match(frame, /profiler: lighthouse 12\.x/);
+  assert.match(frame, /TOTAL BLOCKING TIME \(TBT\)\s+120 ms\s+210 ms\s+-42\.9%/);
+  assert.match(frame, /PERFORMANCE SCORE\s+91\s+72\s+\+19/);
+  assert.equal(frame.match(/-30\.6%/g).length, 2, "LCP once in the table, once in the chart footer");
+  assert.doesNotMatch(frame, /STATUS:/);
+  assert.doesNotMatch(frame, /UPDATED:/);
+  assert.doesNotMatch(frame, /exp_/);
+  assert.doesNotMatch(frame, /profiler:/);
+  assert.doesNotMatch(frame, /^\s*│\s*LCP\s/m, "the short-name table is gone");
 
-  // Bottom panel: bars, axis labels, legend, footer stats.
+  // Bottom panel: bars, axis labels, footer stats. The chart is bars and
+  // numbers — no legend block and no reference line drawn through the plot.
   assert.match(frame, /Lower is better/);
   assert.match(frame, /1680/);
   assert.match(frame, /2420/);
-  assert.match(frame, /★ BEST exp_003/);
-  assert.match(frame, /BASELINE exp_000/);
+  assert.match(frame, /★1680/, "the best run keeps its star");
   assert.match(frame, /ROLLING AVERAGE \(last 5 runs\)/);
   assert.match(frame, /TOTAL RUNS: 4/);
   assert.match(frame, /IMPROVEMENT vs BASELINE: -30\.6%/);
+  assert.doesNotMatch(frame, /BEST exp_/);
+  assert.doesNotMatch(frame, /BASELINE exp_/);
+  assert.doesNotMatch(frame, /OTHER RUNS/);
+  assert.doesNotMatch(frame, /╌/);
 });
 
 // Mid-run, before results.final exists: the panels must have moved off the
@@ -276,8 +284,7 @@ test("buildDashboard advances the loop and the candidate before final is written
 
   assert.match(frame, /LOOP 002/);
   assert.match(frame, /CURRENT EXPERIMENT: Defer non-critical scripts/);
-  assert.match(frame, /RESULT: IMPROVED/);
-  assert.match(frame, /exp_002/, "the candidate column names the last kept run");
+  // The candidate column has moved to the last kept run, not sat on baseline.
   assert.match(frame, /PAGE LOAD TIME \(LCP\)\s+3\.61 s\s+4\.66 s\s+-22\.5%/);
   assert.match(frame, /TOTAL RUNS: 3/, "baseline, the miss, and the keep");
   assert.match(frame, /3608/);
@@ -292,6 +299,50 @@ test("buildDashboard survives an empty session and a half-written file", () => {
     assert.match(frame, /AUTORESEARCH \/ WEBSITE SPEED/);
     assert.match(frame, /waiting for the first baseline measurement/);
   }
+});
+
+// The metric names are the column a reader scans, so the number columns give up
+// their padding before a name gets abbreviated.
+test("the metrics table keeps the full names on a narrow terminal", () => {
+  const frame = text(buildDashboard({ size: { columns: 60, rows: 30 }, results: RESULTS, state: STATE, log: [] }));
+  for (const name of [
+    "PAGE LOAD TIME (LCP)",
+    "TOTAL BLOCKING TIME (TBT)",
+    "FIRST CONTENTFUL PAINT (FCP)",
+    "TIME TO INTERACTIVE (TTI)",
+    "CUMULATIVE LAYOUT SHIFT (CLS)",
+  ]) {
+    assert.ok(frame.includes(name), `${name} was abbreviated or truncated at 60 columns`);
+  }
+  assert.match(frame, /METRIC\s+CANDIDATE\s+BASELINE\s+Δ/);
+});
+
+// The counter is a position in a planned run, not a tally: "LOOP 005" on its own
+// reads like an ending on a board with 24 categories still to walk.
+test("the loop counter shows the run's planned length, and the panel says what it is made of", () => {
+  const frame = text(buildDashboard({
+    size: { columns: 120, rows: 44 },
+    results: RESULTS,
+    state: STATE,
+    log: [],
+  }));
+  assert.match(frame, /LOOP 003 OF 029/);
+  assert.match(frame, /24 checklist \+ up to 5 extra/);
+  assert.match(frame, /round 1/);
+});
+
+// A round from an older session, or one recorded before the plan existed, still
+// renders — it just says less.
+test("the loop counter falls back to a bare count without a plan", () => {
+  const frame = text(buildDashboard({
+    size: { columns: 120, rows: 44 },
+    results: RESULTS,
+    state: { round: 2 },
+    log: [],
+  }));
+  assert.match(frame, /LOOP 003/);
+  assert.doesNotMatch(frame, /LOOP 003 OF/);
+  assert.match(frame, /round 2/);
 });
 
 test("a long log keeps only what fits, newest last", () => {

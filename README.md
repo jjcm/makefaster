@@ -31,9 +31,10 @@ What happens:
 1. **Offers its own hosted model first, then the agent CLIs you already have.**
    **Makefaster** (`--cli makefaster`) needs nothing installed and no account:
    the model runs through `makefaster.dev`, which holds the OpenRouter
-   credential and proxies chat completions, so the CLI never sees a key. Its
-   model is pinned server-side to `stealth/ox-alpha`, so there is nothing to
-   pick. Then the local ones, detected via PATH, well-known install locations
+   credential and proxies chat completions, so the CLI never sees a key. You
+   choose between the two models that deployment serves —
+   `stealth/ox-alpha` (default) or `z-ai/glm-5.2:free`. Then the local ones,
+   detected via PATH, well-known install locations
    (`~/.local/bin`, `~/.claude/local`, `~/.cursor/bin`, Homebrew…) and explicit
    env overrides (`CURSOR_AGENT_EXECUTABLE`, `CLAUDE_CODE_EXECUTABLE` /
    `BB_CLAUDE_CODE_EXECUTABLE`, `CODEX_EXECUTABLE`): Cursor Agent
@@ -41,9 +42,9 @@ What happens:
    makefaster never bundles or downloads a model.
 2. **Asks you to pick** — the hosted option first and pre-selected, then
    whichever CLIs were actually found. Before anything runs.
-3. **Asks you to pick a model** — five per provider, ranked by intelligence
-   (see [Model picker](#model-picker)). `--model <id>` skips the picker, and
-   the hosted provider skips it entirely because its model is pinned.
+3. **Asks you to pick a model** — five per provider, ranked by intelligence, or
+   the hosted provider's two (see [Model picker](#model-picker)). `--model <id>`
+   skips the picker either way.
 4. **Reuses the sign-in you already have.** For a local CLI, makefaster never
    runs a `login`, opens a browser, prints a device code, or injects an API key;
    a signed-out install fails with the CLI's own auth error and makefaster
@@ -54,22 +55,23 @@ What happens:
    live leaderboard, falling back to the technique catalog bundled at
    [`packages/cli/data/improvements.json`](packages/cli/data/improvements.json)
    while the public board is still filling up. Either way that ranked list is
-   the order the loop works in.
+   the order the loop works in, and **its length is the length of the run** (see
+   [The run is N + up to 5](#the-run-is-n--up-to-5)).
 6. **Runs the agent CLI hidden** with the loop skill
    ([`packages/skill/SKILL.md`](packages/skill/SKILL.md)): profile a
    user-felt metric (Lighthouse if available; cold + warm; median of ≥3 runs),
-   then walk the imported checklist in rank order — one category per iteration,
-   skipping what plainly does not apply — and finish with exactly five
-   hypotheses of the agent's own. Measure each one, keep it if it beats the
+   then walk the whole imported checklist in rank order — one category per
+   iteration, skipping only what plainly does not apply — and finish with up to
+   five hypotheses of the agent's own. Measure each one, keep it if it beats the
    noise floor, revert otherwise. The other product's interface never draws and never
    prompts you (see [The native CLI stays hidden](#the-native-cli-stays-hidden));
    makefaster shows [its own dashboard](#the-dashboard) instead.
-7. **Stops when the checklist and the five extras are done** — or earlier,
-   after 5 consecutive misses (no serious improvement: ≥5% or ≥20 ms on the
-   north-star metric, and FCP-only wins that regress LCP don't count) — then
+7. **Stops when the whole checklist has been walked and the extras are done** —
+   not at five runs, and not because several attempts in a row missed — then
    leaves the dashboard and shows the end screen with three
    questions:
-   - **Loop more?** — resets the miss counter and continues.
+   - **Loop more?** — another round: whatever is left of the checklist first,
+     then more extras.
    - **Submit stats to the Site leaderboard?** — your URL and favicon are
      displayed publicly with the measured LCP/TTI improvements, and the row
      links to the pull request the run was opened as when there is one.
@@ -82,20 +84,53 @@ Usage: npx makefaster [dir] [options]
   --cli <makefaster|cursor|claude|codex>
                                 Skip the picker ("makefaster" = the hosted
                                 model, no local CLI or key needed)
-  --model <id>                  Skip the model picker (unused by --cli
-                                makefaster, whose model is pinned)
+  --model <id>                  Skip the model picker (for --cli makefaster:
+                                stealth/ox-alpha or z-ai/glm-5.2:free)
   --url <example.com>           Site URL for the leaderboard submission
   --api <base>                  Leaderboard API base (default https://makefaster.dev)
   --improvements <path|url>     Override the checklist source
-  --max-misses <n>              Stop after n straight misses (default 5)
+  --extras <n>                  Hypotheses of its own the agent may add after
+                                the checklist (default 5, and it may use fewer)
   --no-tui                      Plain progress lines instead of the dashboard
 ```
 
 Session state lives in `.makefaster/` in the target repo (auto-excluded from
 git via `.git/info/exclude`): `SKILL.md` and `improvements.json` are what the
-CLI hands the agent, `state.json` records the chosen provider, model and loop
-limits, and the agent writes back `results.json` (the record the CLI reads) and
-`thinking.log` (one tagged line per step, which is what the dashboard shows).
+CLI hands the agent, `state.json` records the chosen provider, model and the run
+plan (`checklistCount`, `extrasBudget`, `plannedRuns`), and the agent writes back
+`results.json` (the record the CLI reads) and `thinking.log` (one tagged line per
+step, which is what the dashboard shows).
+
+### The run is N + up to 5
+
+A session is **every category on the live improvement board, plus up to five
+hypotheses the agent picks itself.** `N` is whatever
+[makefaster.dev/data/improvements.json](https://makefaster.dev/data/improvements.json)
+is carrying when the checklist is imported — 24 categories today, so 29 runs —
+and nothing in the CLI caps it. An empty board means `N` is 0 and the run is just
+the extras.
+
+What that rules out, because it is what the loop used to do:
+
+- **it does not stop at five runs.** Five is the extras budget, not the size of
+  the session;
+- **it does not stop on a miss streak.** `--max-misses` is gone. Stopping after
+  five consecutive measurements with no serious improvement sounds like
+  discipline and behaves like starvation: the board is ranked by what worked on
+  *other* sites, so the first few categories on any given site are often
+  "already done here" or "no effect here", and the run ended five measurements
+  into a fifty-category list. A revert costs an iteration and nothing else;
+- **it does not let the agent cut the walk short** to get to its own ideas. The
+  extras come after the checklist, not instead of the dull end of it.
+
+A `[SKIP]` is still free and still expected — a category that plainly does not
+apply to this stack costs no measurement, gets no row in `results.json` and no
+timing bar. Skips are a judgement about the site, not a shortcut.
+
+The keep/revert rules are unchanged: LCP is the north star, a keep has to beat
+the measured noise floor **and** move it by ≥5% or ≥20 ms, an FCP-only win that
+regresses LCP does not count, and `results.json` is rewritten with real numbers
+after every measurement.
 
 ## The dashboard
 
@@ -115,15 +150,17 @@ no dependencies — raw ANSI, three panels, repainted from
   `Read File`, `approved bash` — which says the agent is busy without ever
   saying what it is doing, and it buried the two lines a reader wanted. It is
   still consumed as the child's heartbeat.
-- **AUTORESEARCH / WEBSITE SPEED** — the loop counter, the current experiment,
-  and every metric the session measured (`lcpMs`, `tbtMs`, `fcpMs`, `ttiMs`,
-  plus `cls` and `score` when the agent records them) as candidate vs baseline.
-  Rows for metrics you did not measure are left out rather than shown empty. The
-  candidate is `results.final` once the last measurement pass has been written,
-  and until then it is the state the kept iterations have walked the site to —
-  so a keep moves the column the moment it is recorded.
-- **RUN TIMINGS** — one bar per run on the north-star metric, with a dashed
-  baseline, a star on the best run, and the rolling average. Every measured
+- **AUTORESEARCH / WEBSITE SPEED** — where the loop is (`LOOP 003 OF 029` plus
+  the experiment running now), then one table: a row per metric the session
+  measured (`lcpMs`, `tbtMs`, `fcpMs`, `ttiMs`, plus `cls` and `score` when the
+  agent records them) as candidate, baseline and Δ. Rows for metrics you did not
+  measure are left out rather than shown empty. The candidate is `results.final`
+  once the last measurement pass has been written, and until then it is the state
+  the kept iterations have walked the site to — so a keep moves the column the
+  moment it is recorded.
+- **RUN TIMINGS** — one bar per run on the north-star metric, with a star on the
+  best run and a footer carrying the rolling average, the improvement against
+  baseline, and the run count. Every measured
   iteration is a bar, kept or reverted: a miss was profiled just as carefully,
   and only kept ones move the running value. An iteration can report either the
   absolute value the run landed on or the `deltaMs` it moved, and one that
@@ -243,11 +280,36 @@ catalog lives in [`packages/cli/lib/models.js`](packages/cli/lib/models.js).
 `--model` also accepts an id that is not in this table and passes it straight
 through, so a model released after this snapshot still works.
 
+### The hosted provider's two models
+
+`--cli makefaster` is the exception. Its models run on **makefaster.dev's**
+OpenRouter credential rather than yours, so the set is the server's decision —
+but which of them runs is yours:
+
+| id | label | notes |
+|---|---|---|
+| `stealth/ox-alpha` | OX Alpha | the default |
+| `z-ai/glm-5.2:free` | GLM 5.2 | free tier upstream; slower under load |
+
+The picker offers both (labels on screen, those exact ids on the wire) and
+`--model` picks one without a prompt. An id that is not one of the two is
+**refused, not substituted** — by the CLI before the run starts, and by the proxy
+if a client asks anyway. Neither is in the CursorBench snapshot, so neither gets
+a score: this list is not a ranking, it is an allowlist.
+
+Two copies of that allowlist exist on purpose —
+[`packages/cli/lib/models.js`](packages/cli/lib/models.js) for the picker and
+`AllowedModels` in
+[`backend/internal/inference/proxy.go`](backend/internal/inference/proxy.go) for
+the proxy — because the server cannot trust the client's copy. The CLI checks its
+choice against `GET /api/health`, which publishes the server's list, so a
+mismatch is a message before the run rather than a failed completion during it.
+
 ## Skills
 
 | file | what |
 |---|---|
-| [`packages/skill/SKILL.md`](packages/skill/SKILL.md) | the **operational loop** the CLI hands to your agent: profiling rules, one-hypothesis iterations, the keep/revert bar, the 5-miss stop rule, and the `results.json` contract |
+| [`packages/skill/SKILL.md`](packages/skill/SKILL.md) | the **operational loop** the CLI hands to your agent: profiling rules, one-hypothesis iterations, the keep/revert bar, the "whole checklist plus up to five extras" stop rule, and the `results.json` contract |
 | [`skill/SKILL.md`](skill/SKILL.md) | the **canonical technique catalog** — the updated [jjcm/speedupskill](https://github.com/jjcm/speedupskill) `SKILL.md` (measured wins, traps, keep/ditch discipline). Canonical here because a PR to that repo could not be opened from this environment; see [`skill/README.md`](skill/README.md) |
 
 ## Run locally
@@ -378,8 +440,12 @@ line, and responses are scrubbed on the way out as a backstop.
 Which makes it the one endpoint here that spends money per request, so it is
 deliberately narrow ([`backend/internal/inference`](backend/internal/inference)):
 
-- the **model is pinned** to `stealth/ox-alpha` server-side. Whatever the client
-  sends is discarded, so nobody can spend the credential on a model nobody chose;
+- the **model must be on the server's allowlist** — `stealth/ox-alpha` or
+  `z-ai/glm-5.2:free`, and nothing else. The user picks between them in the CLI,
+  but the set is the server's: an id that is not on the list is answered `400`
+  naming the two that are, rather than substituted, and a request that names no
+  model gets the default. That is what keeps this a two-model proxy instead of an
+  arbitrary-model one;
 - **`max_tokens` is clamped** (8192) and **streaming is refused**, so one request
   cannot run away;
 - a request with **no messages is rejected** before it costs anything, as is any
@@ -388,7 +454,8 @@ deliberately narrow ([`backend/internal/inference`](backend/internal/inference))
   leaderboard writes, and the 429 says why;
 - with **no credential configured it answers 503** with the fix, rather than
   failing obscurely — and `GET /api/health` reports
-  `inference: { available, model }` so the CLI can say so before a run starts.
+  `inference: { available, model, models }` so the CLI can say so, and check its
+  own picker against the deployment's list, before a run starts.
 
 Set the key at deploy time; there is none in this repo, and the tests use an
 `httptest` upstream and a placeholder string.

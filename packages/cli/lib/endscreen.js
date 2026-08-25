@@ -1,6 +1,6 @@
 /**
  * The end screen: session summary plus the three questions —
- *   1. Loop more?                        (reset the miss counter, continue)
+ *   1. Loop more?                        (another round from where it left off)
  *   2. Submit stats to the Site leaderboard?   (URL + favicon are public)
  *   3. Submit anonymous improvements data?     (categories + deltas only)
  */
@@ -26,6 +26,22 @@ function metricLine(name, baseline, final) {
   if (typeof baseline !== "number" || typeof final !== "number") return null;
   const change = pctChangeLabel(baseline, final);
   return `    ${name.padEnd(5)} ${String(Math.round(baseline)).padStart(6)}ms ${ARROW} ${String(Math.round(final)).padStart(6)}ms  ${change}`;
+}
+
+/**
+ * How much of the planned run actually happened. The counts come from the
+ * iterations' own `phase` when the agent recorded it, and from the plan alone
+ * when it did not — either way this is the line that shows a session that
+ * stopped a third of the way down the board.
+ */
+function walkLine(iterations, state) {
+  const planned = Number.isFinite(state?.plannedRuns) ? state.plannedRuns : null;
+  if (planned === null) return `runs: ${iterations.length}`;
+  const phase = (name) => iterations.filter((it) => it.phase === name).length;
+  const checklist = phase("checklist");
+  const extras = phase("extra");
+  if (checklist + extras === 0) return `planned: up to ${planned}`;
+  return `checklist ${checklist}/${state.checklistCount}  extras ${extras}/${state.extrasBudget}`;
 }
 
 export function renderSummary(results, state) {
@@ -57,7 +73,7 @@ export function renderSummary(results, state) {
 
   const iterations = results.iterations || [];
   const kept = iterations.filter((it) => it.kept === true);
-  lines.push("", `  iterations: ${iterations.length}  kept: ${kept.length}  miss streak at exit: ${results.missStreak ?? "?"}`);
+  lines.push("", `  iterations: ${iterations.length}  kept: ${kept.length}  ${walkLine(iterations, state)}`);
   if (kept.length > 0) {
     lines.push("", `  ${bold("kept improvements")}`);
     for (const it of kept) {
@@ -169,7 +185,8 @@ export async function runEndScreen({ results, state, paths }) {
   }
 
   console.log(`  ${bold("1. Loop more?")}`);
-  console.log(dim(`     Resets the miss counter (currently ${results?.missStreak ?? "?"}/${state.maxMisses}) and continues the loop.`));
+  console.log(dim(`     Runs another round: anything left of the ${state.checklistCount ?? "?"}-category checklist first,`));
+  console.log(dim(`     then up to ${state.extrasBudget ?? "?"} more hypotheses of the agent's own.`));
   const loopMore = await confirm("     Keep looping?", { def: false });
   console.log("");
 

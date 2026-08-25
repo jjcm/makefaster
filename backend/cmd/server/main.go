@@ -63,7 +63,7 @@ func main() {
 	models := inference.New(cfg.Inference.APIKey, cfg.Inference.BaseURL, logger)
 	if !models.Available() {
 		logger.Warn("OPENROUTER_API_KEY is not set; the hosted `makefaster` provider will answer 503",
-			"model", models.Model())
+			"models", models.Models())
 	}
 
 	server := httpapi.NewServer(httpapi.Options{
@@ -80,7 +80,8 @@ func main() {
 		"frontend", cfg.FrontendDir,
 		"embedder", embedder.ID(),
 		"threshold", threshold,
-		"hostedModel", models.Model(),
+		"hostedModels", models.Models(),
+		"hostedModelDefault", models.Model(),
 		"hostedModelAvailable", models.Available())
 
 	httpServer := &http.Server{

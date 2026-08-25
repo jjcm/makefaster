@@ -4,7 +4,7 @@
  * it renders identically into a terminal or into a test assertion.
  *
  *   ┌ AGENT THINKING ────────────────────────────┐  tagged, timestamped log
- *   ┌ AUTORESEARCH / WEBSITE SPEED ──────────────┐  live metrics + candidate
+ *   ┌ AUTORESEARCH / WEBSITE SPEED ──────────────┐  candidate vs baseline, per metric
  *   ┌ RUN TIMINGS ───────────────────────────────┐  a bar per iteration
  *
  * Everything is derived from `.makefaster/results.json` (the contract in
@@ -25,7 +25,10 @@ import { BLOCKS, BLOCK_FULL, BOX, COLORS, STAR, fit, formatDuration, seg } from 
 const LOG_MIN_HEIGHT = 5;
 const METRICS_MIN_HEIGHT = 9;
 const CHART_MIN_HEIGHT = 8;
-const METRICS_IDEAL_HEIGHT = 15;
+// The metrics panel has a known full size — two borders, the loop line, a
+// blank, the table's two header rows and one row per metric — so it asks for
+// exactly that and hands the rest to the log and the chart, which can use it.
+const METRICS_IDEAL_HEIGHT = 12;
 const CHART_IDEAL_HEIGHT = 13;
 
 /**
@@ -238,10 +241,6 @@ export function deriveVerdict(results) {
   return of("REGRESSED", false);
 }
 
-function experimentId(index) {
-  return `exp_${String(index).padStart(3, "0")}`;
-}
-
 // ---------------------------------------------------------------------------
 // Panels
 // ---------------------------------------------------------------------------
@@ -318,110 +317,87 @@ function thinkingPanel({ width, height, log, model, provider }) {
   return panel({ width, height, title: ">_ AGENT THINKING", titleRight: right, body });
 }
 
-/** MIDDLE — status, live metrics, and the candidate-versus-baseline table. */
-function autoresearchPanel({ width, height, results, state, status, updatedAt }) {
+/** MIDDLE — where the loop is, and one candidate-versus-baseline table. */
+function autoresearchPanel({ width, height, results, state }) {
   const inner = width - 4;
-  const runs = deriveRuns(results);
-  const verdict = deriveVerdict(results);
   const metrics = deriveMetrics(results);
-  const loop = Math.max(0, runs.runs.length - 1);
-  const currentExperiment = verdict.name || (results ? "measuring baseline" : "starting up");
+  const loop = Math.max(0, deriveRuns(results).runs.length - 1);
+  const currentExperiment = deriveVerdict(results).name || (results ? "measuring baseline" : "starting up");
 
-  // Below roughly 100 columns the side-by-side table cannot hold its own
-  // columns, and the left metrics already carry candidate, baseline and Δ — so
-  // narrow terminals get one honest column instead of two cramped ones.
-  const showTable = inner >= 94;
-  const tableWidth = showTable ? Math.min(46, Math.max(38, Math.floor(inner * 0.44))) : 0;
-  const leftWidth = showTable ? inner - tableWidth - 5 : inner - 2;
-
+  // The loop counter reads as a position in the run, not a tally: a session on a
+  // 24-category board is 29 runs long, and "LOOP 005" alone looks like an ending.
+  const planned = Number.isFinite(state?.plannedRuns) && state.plannedRuns > 0 ? state.plannedRuns : null;
   const body = [];
   body.push([
     seg(`LOOP ${String(loop).padStart(3, "0")}`, "heading"),
+    seg(planned ? ` OF ${String(planned).padStart(3, "0")}` : "", "muted"),
     seg("   CURRENT EXPERIMENT: ", "label"),
-    seg(fit(currentExperiment, Math.max(0, inner - 30)), "accent"),
-  ]);
-  body.push([
-    seg("STATUS: ", "label"), seg(pad(status, 9), "value"),
-    seg("| RESULT: ", "label"), seg(pad(verdict.label, 11), verdict.better === null ? "muted" : verdict.better ? "good" : "bad"),
-    seg("| UPDATED: ", "label"), seg(updatedAt || "—", "value"),
+    seg(fit(currentExperiment, Math.max(0, inner - (planned ? 38 : 30))), "accent"),
   ]);
   body.push([]);
-
-  const left = metricRows(metrics, leftWidth);
-  if (!showTable) {
-    body.push(...(left.length > 0 ? left : [[seg("waiting for the first measurement", "muted")]]));
-  } else {
-    // The candidate column is whatever run the site currently stands at, so it
-    // names the last kept experiment rather than the last one attempted.
-    const right = comparisonRows({ metrics, width: tableWidth, candidateIndex: runs.candidate?.index ?? 0 });
-    for (let i = 0; i < Math.max(left.length, right.length); i++) {
-      const row = left[i] ?? [];
-      body.push([
-        ...row,
-        seg(" ".repeat(Math.max(0, leftWidth - lengthOf(row)))),
-        seg(` ${BOX.v} `, "border"),
-        ...(right[i] ?? []),
-      ]);
-    }
-  }
-
-  const footer = [results?.profilingTool ? `profiler: ${results.profilingTool}` : null, results?.site?.url || null]
-    .filter(Boolean).join("   |   ");
+  body.push(...(metrics.length > 0
+    ? metricsTable(metrics, inner)
+    : [[seg("waiting for the first measurement", "muted")]]));
 
   return panel({
     width,
     height,
     title: "AUTORESEARCH / WEBSITE SPEED",
-    titleRight: state?.round ? `round ${state.round}` : null,
-    // The measurement conditions are part of reading the numbers honestly, so
-    // the footer keeps its row and the metric list is what gives way.
-    body: footer ? withReservedFooter(body, [seg(fit(footer, inner), "muted")], height - 2) : body,
+    titleRight: planTitle(state),
+    body,
   });
 }
 
-function withReservedFooter(body, footer, capacity) {
-  if (capacity <= 1) return [footer];
-  const rows = body.slice(0, capacity - 1);
-  while (rows.length < capacity - 1) rows.push([]); // the footer sits on the last row
-  return [...rows, footer];
+/**
+ * The panel's top-right note: the round, plus what the run is made of, so the
+ * checklist's length is visible while it is being walked.
+ */
+function planTitle(state) {
+  const parts = [];
+  if (state?.round) parts.push(`round ${state.round}`);
+  if (Number.isFinite(state?.checklistCount) && Number.isFinite(state?.extrasBudget)) {
+    parts.push(`${state.checklistCount} checklist + up to ${state.extrasBudget} extra`);
+  }
+  return parts.length > 0 ? parts.join("  |  ") : null;
 }
 
-function metricRows(metrics, width) {
-  const nameWidth = Math.max(10, width - 26);
-  // Truncating "TOTAL BLOCKING TIME (TBT)" to "TOTAL BLOCKING TIME (T…" reads
-  // worse than just saying "TBT", so a tight column uses the short name.
-  const longest = Math.max(...metrics.map((metric) => metric.long.length), 0);
-  const useLong = longest <= nameWidth;
-  return metrics.map((metric) => [
-    seg(pad(useLong ? metric.long : metric.short, nameWidth), "label"),
-    seg(pad(metric.candidate, 9, "right"), "value"),
-    seg(pad(metric.baseline, 9, "right"), "muted"),
-    seg(pad(metric.changeLabel, 8, "right"), metric.better === null ? "muted" : metric.better ? "good" : "bad"),
-  ]);
-}
+// Number columns, roomy and tight. A value is never wider than "-42.9%", so the
+// tight pair still holds every number — it only gives up the padding.
+const ROOMY_COLUMNS = { value: 12, change: 10 };
+const TIGHT_COLUMNS = { value: 9, change: 8 };
 
-function comparisonRows({ metrics, width, candidateIndex }) {
-  const metricWidth = Math.max(6, width - 30);
-  const rows = [];
-  rows.push([
-    seg(pad("", metricWidth)),
-    seg(pad("CANDIDATE", 10, "right"), "heading"),
-    seg(pad("BASELINE", 10, "right"), "accent"),
-    seg(pad("Δ", 8, "right"), "heading"),
-  ]);
-  rows.push([
-    seg(pad("METRIC", metricWidth), "label"),
-    seg(pad(experimentId(candidateIndex), 10, "right"), "muted"),
-    seg(pad(experimentId(0), 10, "right"), "muted"),
-    seg(pad("CHANGE", 8, "right"), "label"),
-  ]);
-  rows.push([seg(BOX.h.repeat(Math.min(width, metricWidth + 36)), "border")]);
+/**
+ * The panel's one table: a row per metric the session measured, spanning the
+ * panel — full names on the left, numbers right-aligned to the far edge.
+ *
+ * There were two of these side by side, a list of full names and a narrow table
+ * of abbreviations, so every number was on screen twice and neither copy had
+ * room to breathe.
+ *
+ * The names are what a reader scans, so the number columns give up their padding
+ * first: a panel that cannot hold "TOTAL BLOCKING TIME (TBT)" whole is a
+ * narrower panel, not a reason to fall back to "TBT".
+ */
+function metricsTable(metrics, width) {
+  const longest = Math.max(...metrics.map((metric) => metric.long.length), "METRIC".length);
+  const columns = width - ROOMY_COLUMNS.value * 2 - ROOMY_COLUMNS.change >= longest ? ROOMY_COLUMNS : TIGHT_COLUMNS;
+  const nameWidth = Math.max(10, width - columns.value * 2 - columns.change);
+  const rows = [
+    [
+      seg(pad("METRIC", nameWidth), "label"),
+      seg(pad("CANDIDATE", columns.value, "right"), "muted"),
+      seg(pad("BASELINE", columns.value, "right"), "accent"),
+      seg(pad("Δ", columns.change, "right"), "label"),
+    ],
+    [seg(BOX.h.repeat(width), "border")],
+  ];
+
   for (const metric of metrics) {
     rows.push([
-      seg(pad(metric.short, metricWidth), "label"),
-      seg(pad(metric.candidate, 10, "right"), "value"),
-      seg(pad(metric.baseline, 10, "right"), "muted"),
-      seg(pad(metric.changeLabel, 8, "right"), metric.better === null ? "muted" : metric.better ? "good" : "bad"),
+      seg(pad(metric.long, nameWidth), "label"),
+      seg(pad(metric.candidate, columns.value, "right"), "value"),
+      seg(pad(metric.baseline, columns.value, "right"), "muted"),
+      seg(pad(metric.changeLabel, columns.change, "right"), metric.better === null ? "muted" : metric.better ? "good" : "bad"),
     ]);
   }
   return rows;
@@ -438,7 +414,6 @@ export function niceMax(value) {
 }
 
 const AXIS_WIDTH = 6;
-const LEGEND_WIDTH = 30;
 
 /**
  * Gridline labels for the y axis: round multiples of a nice step, placed on the
@@ -456,7 +431,7 @@ function axisGridLabels({ max, cellValue, plotHeight }) {
   return labels;
 }
 
-/** BOTTOM — a bar per run, a dashed baseline, and a star on the best one. */
+/** BOTTOM — a bar per run, with a star on the best one. */
 function timingsPanel({ width, height, results }) {
   const inner = width - 4;
   const { runs, baseline, best, key } = deriveRuns(results);
@@ -470,8 +445,7 @@ function timingsPanel({ width, height, results }) {
     });
   }
 
-  const showLegend = inner >= AXIS_WIDTH + 34 + LEGEND_WIDTH;
-  const plotWidth = Math.max(8, inner - AXIS_WIDTH - (showLegend ? LEGEND_WIDTH : 0) - 2);
+  const plotWidth = Math.max(8, inner - AXIS_WIDTH - 2);
   // Panel rows: value labels, the plot, run labels, an optional spacer, the
   // stats line. The plot gives up rows before the stats line does, because the
   // numbers matter more than the bar resolution.
@@ -490,9 +464,7 @@ function timingsPanel({ width, height, results }) {
 
   const max = niceMax(Math.max(...shown.map((run) => run.value)));
   const cellValue = max / plotHeight;
-  const baselineRow = baseline === null ? -1 : Math.min(plotHeight - 1, Math.max(0, Math.round(baseline / cellValue) - 1));
   const axisLabels = axisGridLabels({ max, cellValue, plotHeight });
-  const plotTail = Math.max(0, plotWidth - shown.length * slot);
 
   const body = [];
   body.push([
@@ -512,19 +484,9 @@ function timingsPanel({ width, height, results }) {
       let glyph = "";
       if (whole > row) glyph = BLOCK_FULL;
       else if (whole === row) glyph = BLOCKS[Math.round((filled - whole) * 8)] ?? "";
-      if (glyph === "") {
-        // No part of this bar reaches this row, so the baseline shows through.
-        cells.push(row === baselineRow ? seg(BOX.dash.repeat(slot), "accent") : seg(" ".repeat(slot)));
-      } else {
-        cells.push(seg(pad(glyph.repeat(barWidth), slot), run === best ? "barBest" : "bar"));
-      }
-    }
-    // Carry the dashed baseline across the empty part of the plot, so it reads
-    // as one reference line rather than a dash under each short bar.
-    cells.push(row === baselineRow ? seg(BOX.dash.repeat(plotTail), "accent") : seg(" ".repeat(plotTail)));
-    if (showLegend) {
-      cells.push(seg("  "));
-      cells.push(...legendRow(row, plotHeight, { best, baseline }));
+      cells.push(glyph === ""
+        ? seg(" ".repeat(slot))
+        : seg(pad(glyph.repeat(barWidth), slot), run === best ? "barBest" : "bar"));
     }
     body.push(cells);
   }
@@ -548,18 +510,6 @@ function timingsPanel({ width, height, results }) {
   return panel({ width, height, title, titleRight: "Lower is better", body });
 }
 
-function legendRow(row, plotHeight, { best, baseline }) {
-  const fromTop = plotHeight - 1 - row;
-  if (fromTop === 0 && best) {
-    return [seg(`${STAR} BEST ${experimentId(best.index)}  `, "barBest"), seg(`${Math.round(best.value)} ms`, "value")];
-  }
-  if (fromTop === 1 && baseline !== null) {
-    return [seg(`${BOX.dash.repeat(2)} BASELINE ${experimentId(0)}  `, "accent"), seg(`${Math.round(baseline)} ms`, "muted")];
-  }
-  if (fromTop === 2) return [seg(`${BLOCK_FULL} OTHER RUNS`, "bar")];
-  return [];
-}
-
 // ---------------------------------------------------------------------------
 // Frame
 // ---------------------------------------------------------------------------
@@ -578,8 +528,9 @@ export function allocateHeights(rows) {
     }
     return { gap: 0, log: 0, metrics: rows, chart: 0 };
   }
-  // Roughly two fifths to the numbers, then the chart, then whatever is left to
-  // the log — so a tall terminal grows the log rather than stretching the bars.
+  // The numbers first, up to what the table actually needs, then the chart, then
+  // whatever is left to the log — so a tall terminal grows the log rather than
+  // stretching the bars or padding the table.
   const metrics = Math.min(METRICS_IDEAL_HEIGHT, Math.max(METRICS_MIN_HEIGHT, Math.floor(budget * 0.42)));
   const chart = Math.min(CHART_IDEAL_HEIGHT, Math.max(CHART_MIN_HEIGHT, budget - metrics - LOG_MIN_HEIGHT - 1));
   return { gap, log: budget - metrics - chart, metrics, chart };
@@ -594,7 +545,7 @@ export function allocateHeights(rows) {
  * @param {Array<{time: string, tag: string, text: string}>} args.log
  * @returns {Array<Array<{text: string, style: string}>>} exactly size.rows rows
  */
-export function buildDashboard({ size, results, log = [], state = null, provider = null, model = null, status = "RUNNING", updatedAt = null }) {
+export function buildDashboard({ size, results, log = [], state = null, provider = null, model = null }) {
   const width = Math.max(40, size.columns);
   const heights = allocateHeights(Math.max(12, size.rows));
   const rows = [];
@@ -602,7 +553,7 @@ export function buildDashboard({ size, results, log = [], state = null, provider
 
   if (heights.log > 0) rows.push(...thinkingPanel({ width, height: heights.log, log, model, provider }));
   if (heights.gap) rows.push(blank());
-  if (heights.metrics > 0) rows.push(...autoresearchPanel({ width, height: heights.metrics, results, state, status, updatedAt }));
+  if (heights.metrics > 0) rows.push(...autoresearchPanel({ width, height: heights.metrics, results, state }));
   if (heights.gap) rows.push(blank());
   if (heights.chart > 0) rows.push(...timingsPanel({ width, height: heights.chart, results }));
 

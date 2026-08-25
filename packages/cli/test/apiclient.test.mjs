@@ -25,8 +25,7 @@ const RESULTS = {
     { n: 3, name: "Subset fonts", description: "Only ship used glyphs", category: "Font Subsetting", deltaMs: -90, deltaPct: -4.1, kept: true },
     { n: 4, name: "No-delta oddity", description: "kept but no numbers", kept: true },
   ],
-  missStreak: 5,
-  stoppedReason: "miss-streak",
+  stoppedReason: "checklist-complete",
 };
 
 test("resolveApiBase: flag > env > default, trailing slash stripped", () => {

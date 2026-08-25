@@ -19,7 +19,7 @@ import { listModels } from "../lib/agents/modelList.js";
 import { importChecklist } from "../lib/improvements.js";
 import { signedOutGuidance } from "../lib/invoke.js";
 import { createLoopView } from "../lib/loopView.js";
-import { modelsForProvider, resolveModel } from "../lib/models.js";
+import { modelsForProvider, resolveHostedModel, resolveModel } from "../lib/models.js";
 import { confirm, selectFrom } from "../lib/picker.js";
 import { createTui, tuiSupported } from "../lib/tui.js";
 import {
@@ -28,6 +28,7 @@ import {
   prepareSession,
   readResults,
   runAgent,
+  runPlan,
   writeState,
 } from "../lib/session.js";
 import { ARROW, FAIL, OK, banner, bold, cyan, dim, red, yellow } from "../lib/ui.js";
@@ -42,6 +43,21 @@ function fail(message, code = 1) {
 
 function indent(text) {
   return text.split(/\r?\n/).map((line) => `    ${line}`).join("\n");
+}
+
+/**
+ * How long the run is, in the two numbers that decide it: the checklist the
+ * board handed over, and the extras the agent may add to it.
+ */
+function planLabel({ checklistCount, extrasBudget, plannedRuns }) {
+  if (checklistCount === 0) {
+    return `plan: the checklist is empty, so this run is up to ${extrasBudget} hypotheses of the agent's own`;
+  }
+  const categories = `${checklistCount} checklist ${checklistCount === 1 ? "category" : "categories"}`;
+  if (extrasBudget === 0) {
+    return `plan: ${categories}, no extras — up to ${plannedRuns} measured runs`;
+  }
+  return `plan: ${categories} + up to ${extrasBudget} of the agent's own — up to ${plannedRuns} measured runs`;
 }
 
 async function pickProvider(reports, cliFlag) {
@@ -108,6 +124,50 @@ async function pickProvider(reports, cliFlag) {
 }
 
 /**
+ * Pick one of the hosted provider's models. The server allowlists them and holds
+ * the credential, so this list is short, fixed, and not ranked by anything —
+ * but it is a real choice, and `--model` makes it without a prompt.
+ *
+ * An id the proxy does not serve is refused here rather than sent: the run would
+ * fail on its first completion anyway, and it would fail with the proxy's error
+ * rather than one that says what to pass instead.
+ */
+async function pickHostedModel(provider, modelFlag) {
+  const models = provider.hostedModels ?? [];
+  const offered = models.map((model) => model.id).join(" | ");
+
+  if (modelFlag) {
+    const model = resolveHostedModel(modelFlag);
+    if (!model) {
+      fail(`--model ${modelFlag}: ${provider.displayName} does not serve that model.\n` +
+        `  The hosted provider offers: ${offered}\n` +
+        "  (the server holds the credential, so the set of models is its decision)");
+    }
+    return model;
+  }
+
+  if (models.length <= 1) return models[0] ?? null;
+  if (!process.stdin.isTTY) {
+    console.log(dim(`  (non-interactive: using ${models[0].id} — pass --model <${offered}> to choose)`));
+    return models[0];
+  }
+
+  console.log(`  ${bold(`Which model should ${provider.displayName} run?`)} ${dim("(both run through makefaster.dev on its credential, not yours)")}`);
+  try {
+    const index = await selectFrom({
+      title: dim("  the server allowlists these; nothing else can be requested"),
+      options: models.map((model) => ({ label: `${model.label}  ${dim(model.id)}`, detail: model.detail })),
+      defaultIndex: 0,
+    });
+    if (index === null) process.exit(0);
+    return models[index];
+  } catch (err) {
+    if (err.code === "NO_TTY") return models[0];
+    throw err;
+  }
+}
+
+/**
  * Pick the model, ranked by intelligence. The ranking comes from the CursorBench
  * 3.2 snapshot in jjcm/bb-plugin-autorouter (see lib/models.js); the ids are
  * whatever the chosen CLI itself accepts, reconciled against its live model list
@@ -117,14 +177,7 @@ async function pickProvider(reports, cliFlag) {
  * asking a CLI what models an account can run requires that account.
  */
 async function pickModel(provider, modelFlag, cwd) {
-  // The hosted provider's model is pinned by the server, so there is nothing to
-  // pick and nothing --model could change.
-  if (provider.hosted) {
-    if (modelFlag) {
-      console.log(dim(`  note: ${provider.displayName} runs a fixed model (${provider.hostedModel}) — ignoring --model ${modelFlag}.`));
-    }
-    return { id: provider.hostedModel, label: provider.displayName, pinned: true };
-  }
+  if (provider.hosted) return pickHostedModel(provider, modelFlag);
 
   const live = await listModels({ provider, cwd });
   if (live.authRequired) fail(signedOutGuidance(provider, live.detail), 3);
@@ -170,12 +223,13 @@ async function pickModel(provider, modelFlag, cwd) {
 }
 
 /**
- * Ask the makefaster server whether its hosted model is configured. A server
- * that says no is a hard stop with the alternatives spelled out; a server that
- * cannot be reached is only a warning, because the run may still work and the
- * proxy will say so plainly if it does not.
+ * Ask the makefaster server whether its hosted model is configured, and whether
+ * it serves the one that was picked. A server that says no to either is a hard
+ * stop with the alternatives spelled out; a server that cannot be reached is
+ * only a warning, because the run may still work and the proxy will say so
+ * plainly if it does not.
  */
-async function checkHostedModel(apiBase) {
+async function checkHostedModel(apiBase, model) {
   let health;
   try {
     const res = await fetch(`${apiBase}/api/health`, { headers: { accept: "application/json" } });
@@ -189,6 +243,18 @@ async function checkHostedModel(apiBase) {
       `${apiBase} has no hosted model configured (OPENROUTER_API_KEY is unset on that server).\n` +
       "  Run against your own agent CLI instead — --cli cursor|claude|codex — or point --api at a\n" +
       "  deployment that has one.",
+      3,
+    );
+  }
+  // The allowlist belongs to the deployment, so a deployment that publishes one
+  // is the authority on whether this run can happen at all. An older server
+  // publishes no list and is taken at its word.
+  const served = health?.inference?.models;
+  if (model && Array.isArray(served) && served.length > 0 && !served.includes(model.id)) {
+    fail(
+      `${apiBase} does not serve ${model.id}.\n` +
+      `  That deployment offers: ${served.join(" | ")}\n` +
+      "  Pass --model with one of those, or point --api at a deployment that serves this one.",
       3,
     );
   }
@@ -211,7 +277,12 @@ async function runRoundInDashboard({ provider, prompt, cwd, model, paths, state,
   view.append("INITIALIZING", `Round ${state.round}: driving ${provider.displayName} headlessly${model ? ` on ${model.id}` : ""}.`);
   view.render();
   try {
-    const result = await runAgent({ provider, prompt, cwd, model, apiBase, reporter: view.reporter, signal: controller.signal });
+    const result = await runAgent({
+      provider, prompt, cwd, model, apiBase,
+      plannedRuns: state.plannedRuns,
+      reporter: view.reporter,
+      signal: controller.signal,
+    });
     view.setStatus(result.aborted ? "STOPPED" : "DONE");
     view.flush();
     return result;
@@ -245,12 +316,12 @@ async function main() {
   // 2. Pick the model. For an installed CLI, makefaster reuses the credentials
   //    it already stored and never starts a login, opens a browser, or injects
   //    an API key — so a signed-out install is reported here and the run stops.
-  //    The hosted provider's model is pinned by the server instead, and its
+  //    The hosted provider offers the models its server allowlists, and its
   //    equivalent of "signed out" is a server with no credential, which is
   //    worth learning now rather than three minutes into a run.
   const model = await pickModel(provider, args.model, cwd);
   if (model) console.log(`  ${OK} model ${bold(model.label)} ${dim(model.id)}\n`);
-  if (provider.hosted) await checkHostedModel(apiBase);
+  if (provider.hosted) await checkHostedModel(apiBase, model);
 
   // 3. Import the improvement checklist (live board -> GitHub -> target repo ->
   //    the catalog bundled with this CLI, which is what answers while the
@@ -261,7 +332,12 @@ async function main() {
   } catch (err) {
     fail(err.message);
   }
-  console.log(`  ${OK} imported ${bold(checklist.categories.length)} improvement categories ${dim(`from ${checklist.source}`)}\n`);
+  console.log(`  ${OK} imported ${bold(checklist.categories.length)} improvement categories ${dim(`from ${checklist.source}`)}`);
+
+  // The run's size, said out loud before it starts: the board decides how long
+  // the walk is, and the only budget makefaster imposes is the extras.
+  const plan = runPlan(checklist.categories, args.extras);
+  console.log(`  ${cyan(ARROW)} ${bold(planLabel(plan))} ${dim("— the loop runs the whole checklist; it does not stop on a miss streak")}\n`);
 
   if (!existsSync(join(cwd, ".git"))) {
     console.log(yellow("  note: this directory is not a git repo — the loop relies on git for"));
@@ -277,12 +353,12 @@ async function main() {
     checklist: checklist.categories,
     checklistSource: checklist.source,
     apiBase,
-    maxMisses: args.maxMisses,
+    extras: args.extras,
     siteUrl: args.url,
   });
 
   const useTui = args.tui && tuiSupported();
-  let prompt = kickoffPrompt();
+  let prompt = kickoffPrompt(plan);
   for (;;) {
     console.log(`  ${cyan(ARROW)} running the loop in ${bold(provider.displayName)} ${dim(`(round ${state.round})`)} — hidden, no prompts; this can take a while.`);
     if (useTui) console.log(dim("  makefaster takes the screen while it runs; press q to stop the round.\n"));
@@ -290,7 +366,7 @@ async function main() {
 
     const { exitCode, stderrTail, aborted, authRequired, detail } = useTui
       ? await runRoundInDashboard({ provider, prompt, cwd, model, paths, state, apiBase })
-      : await runAgent({ provider, prompt, cwd, model, apiBase });
+      : await runAgent({ provider, prompt, cwd, model, apiBase, plannedRuns: state.plannedRuns });
 
     // A signed-out install can only be certain once the child has spoken.
     if (authRequired) fail(signedOutGuidance(provider, detail || stderrTail), 3);
@@ -306,18 +382,16 @@ async function main() {
     const { loopMore } = await runEndScreen({ results, state, paths });
     if (!loopMore) break;
 
-    state.missStreak = 0;
     state.round += 1;
     writeState(cwd, state);
     if (results && !results.parseError) {
-      results.missStreak = 0;
       results.stoppedReason = null;
       try {
         const { writeFileSync } = await import("node:fs");
         writeFileSync(paths.results, JSON.stringify(results, null, 2) + "\n");
       } catch { /* the agent re-reads state.json either way */ }
     }
-    prompt = continuePrompt();
+    prompt = continuePrompt(plan);
   }
 }
 

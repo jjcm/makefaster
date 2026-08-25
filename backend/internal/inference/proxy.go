@@ -10,9 +10,11 @@
 // Which makes this the one endpoint on the box that spends money on request, so
 // the rules are deliberately narrow:
 //
-//   - the model is pinned server-side (PinnedModel). Whatever the client asks
-//     for is discarded — the client cannot spend the credential on a model
-//     nobody chose;
+//   - the model must be one of AllowedModels. The user picks between them in the
+//     CLI, but the set is the server's: a model that is not on the list is
+//     refused rather than substituted, so nobody can turn this into an
+//     arbitrary-model proxy and no request quietly bills a model the caller did
+//     not ask for;
 //   - `max_tokens` is clamped and streaming is refused, so one request cannot
 //     run away;
 //   - a request with no messages is rejected before it costs anything;
@@ -36,8 +38,27 @@ import (
 	"time"
 )
 
-// PinnedModel is the only model this proxy will ever ask for.
-const PinnedModel = "stealth/ox-alpha"
+// DefaultModel is what a request that names no model gets.
+const DefaultModel = "stealth/ox-alpha"
+
+// AllowedModels is every model this proxy will ask for, in the order the CLI
+// offers them. Adding one here is a decision about what the credential may be
+// spent on, so the list is deliberately short and deliberately explicit — an
+// empty `model` means DefaultModel, and anything else is refused.
+var AllowedModels = []string{
+	"stealth/ox-alpha",
+	"z-ai/glm-5.2:free",
+}
+
+// ModelAllowed reports whether the proxy will forward a request for this model.
+func ModelAllowed(model string) bool {
+	for _, allowed := range AllowedModels {
+		if model == allowed {
+			return true
+		}
+	}
+	return false
+}
 
 const (
 	// A tool-calling turn is mostly prompt, so the reply cap can be modest;
@@ -82,8 +103,12 @@ func New(apiKey, baseURL string, logger *slog.Logger) *Proxy {
 // Available reports whether a credential is configured.
 func (p *Proxy) Available() bool { return p != nil && p.apiKey != "" }
 
-// Model is the pinned model, for anything that wants to display it.
-func (p *Proxy) Model() string { return PinnedModel }
+// Model is the default model, for anything that wants to display one.
+func (p *Proxy) Model() string { return DefaultModel }
+
+// Models is the allowlist, for anything that wants to offer a choice — the CLI's
+// picker checks its own two ids against this before a run starts.
+func (p *Proxy) Models() []string { return append([]string(nil), AllowedModels...) }
 
 // InvalidRequestError is a client mistake: the caller sent something this proxy
 // will not forward. The message is safe to return verbatim.
@@ -100,7 +125,7 @@ func (p *Proxy) ChatCompletions(ctx context.Context, requestBody []byte) (int, [
 	if !p.Available() {
 		return 0, nil, ErrUnavailable
 	}
-	sanitized, err := sanitizeRequest(requestBody)
+	sanitized, model, err := sanitizeRequest(requestBody)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -132,7 +157,7 @@ func (p *Proxy) ChatCompletions(ctx context.Context, requestBody []byte) (int, [
 
 	p.logger.Info("inference proxy",
 		"status", res.StatusCode,
-		"model", PinnedModel,
+		"model", model,
 		"ms", time.Since(started).Milliseconds(),
 		"bytes", len(body))
 	if res.StatusCode < 200 || res.StatusCode > 299 {
@@ -154,24 +179,31 @@ func (p *Proxy) scrub(payload []byte) []byte {
 }
 
 // sanitizeRequest rewrites the client's request into the only shape this proxy
-// forwards. It keeps the fields a chat completion needs and overrides the ones
-// that decide what the request costs.
-func sanitizeRequest(requestBody []byte) ([]byte, error) {
+// forwards, and returns the model it settled on. It keeps the fields a chat
+// completion needs and overrides the ones that decide what the request costs.
+func sanitizeRequest(requestBody []byte) ([]byte, string, error) {
 	if len(bytes.TrimSpace(requestBody)) == 0 {
-		return nil, &InvalidRequestError{Reason: "a chat completion request body is required"}
+		return nil, "", &InvalidRequestError{Reason: "a chat completion request body is required"}
 	}
 	var request map[string]any
 	if err := json.Unmarshal(requestBody, &request); err != nil {
-		return nil, &InvalidRequestError{Reason: "the request body must be a JSON object"}
+		return nil, "", &InvalidRequestError{Reason: "the request body must be a JSON object"}
 	}
 
 	messages, ok := request["messages"].([]any)
 	if !ok || len(messages) == 0 {
-		return nil, &InvalidRequestError{Reason: "messages must be a non-empty array"}
+		return nil, "", &InvalidRequestError{Reason: "messages must be a non-empty array"}
 	}
 
-	// The model is the server's decision, not the caller's.
-	request["model"] = PinnedModel
+	// The caller chooses from the allowlist rather than naming anything it
+	// likes, and an id that is not on it is refused rather than swapped for the
+	// default: silently billing a model the user did not choose is worse than
+	// saying no.
+	model, err := resolveModel(request["model"])
+	if err != nil {
+		return nil, "", err
+	}
+	request["model"] = model
 
 	// Streaming would mean proxying an event stream and losing the scrub; the
 	// CLI does not need it, so it is refused rather than half-supported.
@@ -190,7 +222,31 @@ func sanitizeRequest(requestBody []byte) ([]byte, error) {
 		request["max_tokens"] = int(tokens)
 	}
 
-	return json.Marshal(request)
+	payload, err := json.Marshal(request)
+	return payload, model, err
+}
+
+// resolveModel maps what the client asked for onto the allowlist: nothing (or an
+// empty string) means the default, an allowed id passes through, and anything
+// else is a client error naming what it could have asked for instead.
+func resolveModel(requested any) (string, error) {
+	if requested == nil {
+		return DefaultModel, nil
+	}
+	name, ok := requested.(string)
+	if !ok {
+		return "", &InvalidRequestError{Reason: "model must be a string"}
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return DefaultModel, nil
+	}
+	if !ModelAllowed(name) {
+		return "", &InvalidRequestError{Reason: fmt.Sprintf(
+			"%q is not a model this deployment serves — the hosted provider offers %s",
+			name, strings.Join(AllowedModels, " and "))}
+	}
+	return name, nil
 }
 
 func numberField(value any) (float64, bool) {

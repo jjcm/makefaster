@@ -9,8 +9,9 @@ It lives here because the update could not be opened as a PR against
 that repo). The file is the original document byte-for-byte, plus:
 
 - a new **"Run it as a packaged loop: `npx makefaster`"** section (after the
-  intro), describing CLI detection, the checklist import, the loop, the 5-miss
-  stop rule, and the leaderboard submissions;
+  intro), describing CLI detection, the checklist import, the loop, the
+  "whole checklist plus up to five extras" stop rule, and the leaderboard
+  submissions;
 - one added **Sources** entry pointing at this repo.
 
 To sync it upstream, copy `skill/SKILL.md` over `SKILL.md` in

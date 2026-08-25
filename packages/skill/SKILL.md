@@ -1,15 +1,16 @@
 ---
 name: makefaster
-description: Autoresearch loop that makes the site in this repo measurably faster. Baseline a user-felt metric, work the improvement leaderboard in rank order one hypothesis per iteration, finish with five of your own, keep or revert with numbers, and report results for the public leaderboards. Driven by `npx makefaster`.
+description: Autoresearch loop that makes the site in this repo measurably faster. Baseline a user-felt metric, work every category on the improvement leaderboard in rank order one hypothesis per iteration, finish with up to five of your own, keep or revert with numbers, and report results for the public leaderboards. Driven by `npx makefaster`.
 ---
 
 # The makefaster loop
 
 You are running inside a makefaster session: the `makefaster` CLI asked the user
 which agent should run the loop and handed you this repo. You are either the
-agent CLI they already had installed, or the hosted model makefaster runs itself
-(`stealth/ox-alpha`, served through makefaster.dev) — the loop is identical
-either way, and so is this file.
+agent CLI they already had installed, or one of the two hosted models makefaster
+runs itself — `stealth/ox-alpha` or `z-ai/glm-5.2:free`, whichever the user
+picked, served through makefaster.dev. The loop is identical either way, and so
+is this file. `state.json` records which one you are.
 
 Your job is to make the site in the current directory measurably faster for real
 users, one disciplined experiment at a time. The discipline is the same as
@@ -32,14 +33,14 @@ The CLI owns this directory. Never commit it (it is already in
 |---|---|---|
 | `SKILL.md` | CLI | this file |
 | `improvements.json` | CLI | the imported improvement categories — your checklist |
-| `state.json` | CLI creates, **you update `missStreak`** | loop limits and counters |
+| `state.json` | CLI (read-only for you) | the run's plan: `checklistCount`, `extrasBudget`, `plannedRuns`, the round |
 | `results.json` | **you**, after every iteration | the session record the CLI reads back |
 | `thinking.log` | **you**, as each step starts | one tagged line per step — the only thing the user sees while you work |
 
-`improvements.json` is **the order you work in** (see Step 2), not a script to
-apply blindly: you still judge whether each category is viable here before
-spending an iteration on it, and you skip the ones that are not. Its `source`
-field says where it came from. Live leaderboard rows are ranked by what actually
+`improvements.json` is **the order you work in and the length of the run** (see
+Step 2), not a script to apply blindly: you still judge whether each category is
+viable here before spending an iteration on it, and you skip the ones that are
+not. Its `source` field says where it came from. Live leaderboard rows are ranked by what actually
 worked across other sites and carry `count` and average deltas. The catalog
 bundled with the CLI — which is what you get while the public board is still
 filling up — is ordered by rough expected impact and carries no measurements at
@@ -54,12 +55,12 @@ tell them what is happening. Append one line as each step begins:
 ```
 [INITIALIZING] Prepping project and installing dependencies.
 [TEST] Running lighthouse tests for initial baseline
-[CHECKLIST] Walking 50 imported categories in rank order.
+[CHECKLIST] Walking 24 imported categories in rank order, then up to 5 of my own.
 [SKIP] Enable Gzip Compression — the CDN already compresses every text response.
 [TRY] Lazy-Load Components
 [RESULT] -410ms / -14.2% cold LCP — kept.
 [EXTRA] 5 follow-ups chosen: worker offload, srcset rungs, DNS prefetch, JSON slimming, sprite atlas.
-[DONE] Checklist finished with 6 keeps; stopping.
+[DONE] Checklist and 5 extras finished with 6 keeps; stopping.
 ```
 
 The whole vocabulary, and nothing outside it is displayed:
@@ -123,17 +124,22 @@ Rules:
   `results.json.profilingTool`.
 - Write the baseline into `results.json` **before touching any code**.
 
-## Step 2 — the loop: the checklist in order, then five of your own
+## Step 2 — the loop: the whole checklist in order, then up to five of your own
 
-**The order is not yours to choose.** Work the imported improvement leaderboard
-top to bottom first, then add exactly five hypotheses of your own. The board is
-ranked by how often each technique has actually worked on other sites, so
-"whatever looks promising to me" is a worse opening bet than "the thing that has
-worked most often", and a fixed order is also what makes one run comparable to
-the next.
+**The order is not yours to choose, and neither is the length.** Work the
+imported improvement leaderboard top to bottom — **all of it** — and only then
+add up to five hypotheses of your own. The board is ranked by how often each
+technique has actually worked on other sites, so "whatever looks promising to me"
+is a worse opening bet than "the thing that has worked most often", and a fixed
+order is also what makes one run comparable to the next.
+
+The run is therefore `N + up to 5`, where `N` is however many categories
+`.makefaster/improvements.json` holds (`checklistCount` in `state.json`, often
+tens of them) and the five extras are the only model-chosen iterations in it. See
+Step 3: nothing ends the session early.
 
 Profiling still matters — it decides **whether** a checklist category is viable
-here and **what** your five extras should be. It just does not decide the order.
+here and **what** your extras should be. It just does not decide the order.
 
 ### 2a. Walk the checklist, one category per iteration
 
@@ -144,10 +150,11 @@ time. For each one:
    not an iteration. Is the thing already done? Does the stack even have this
    surface? Is it plausibly on the critical path here?
 2. **Not viable → skip it, and say why.** Report
-   `[SKIP] <category> — <one reason>` and move to the next category. A skip
-   costs no iteration and does **not** touch `missStreak`: you did not spend a
-   measurement, so you did not miss. Never spend an iteration implementing
-   something you already know does not apply.
+   `[SKIP] <category> — <one reason>` and move to the next category. A skip is
+   not a run: it costs no measurement, gets no row and no timing bar. Never
+   spend an iteration implementing something you already know does not apply —
+   and never skip a category that does apply just to reach the end of the list
+   sooner.
 3. **Viable → spend one iteration on it.** Report `[TRY] <category>`, then:
    - **Implement the smallest change that tests it.** Make it cleanly
      revertable: commit it on the working branch (or `git stash`-able state). If
@@ -157,14 +164,19 @@ time. For each one:
      3-run median.
    - **Keep or revert, by the numbers** (below).
 
-### 2b. Then exactly five of your own
+### 2b. Then up to five of your own
 
-When the checklist is exhausted, pick **exactly five** hypotheses that were
-**not** on the board — novel techniques, or things shaped by what you saw in
-this specific codebase. Report them up front as
-`[EXTRA] 5 follow-ups chosen: …`, then run them **one at a time** under the same
-keep/revert rules. Your profiling evidence is what these five come from; this is
-where it leads instead of following.
+When the checklist is exhausted — and **only** then — pick up to
+`extrasBudget` (normally five) hypotheses that were **not** on the board: novel
+techniques, or things shaped by what you saw in this specific codebase. Report
+them up front as `[EXTRA] <n> follow-ups chosen: …`, then run them **one at a
+time** under the same keep/revert rules. Your profiling evidence is what these
+come from; this is where it leads instead of following.
+
+Fewer than the budget is fine when you have run out of honest ideas — say so in
+the `[DONE]` line rather than padding the run with an experiment you already
+expect to revert. More than the budget is not: the extras are the one part of
+the session that is yours, and five is what they cost.
 
 ### Keep or revert
 
@@ -172,15 +184,16 @@ where it leads instead of following.
   noise floor, AND by at least **5% or 20 ms** (whichever is larger for the
   metric's scale). An FCP-only win that **regresses LCP does not count** — that
   is rearranging deck chairs.
-- Kept → record the iteration with `kept: true`, classify it with
-  `generic: true` or `generic: false` (see "Classifying a keep" below), and set
-  `missStreak` to `0` in `state.json`.
+- Kept → record the iteration with `kept: true` and classify it with
+  `generic: true` or `generic: false` (see "Classifying a keep" below).
 - Anything else → **revert completely** (revert means revert — no half-kept
-  experiments), record `kept: false`, and increment `missStreak`.
+  experiments) and record `kept: false`. A revert costs you nothing but the
+  iteration: it is not a strike against the run, and several in a row change
+  nothing about what you do next.
 - Either way, report the outcome: `[RESULT] <delta> — kept` or
   `[RESULT] <delta> — reverted, below the noise floor`.
 
-**Update `results.json` and `state.json` after every iteration.** Keep
+**Update `results.json` after every iteration.** Keep
 `results.json` valid JSON at all times — the CLI parses it the moment you exit,
 even if you were interrupted.
 
@@ -366,19 +379,36 @@ so a name it does not recognize is the only way one reaches the board.
 
 ## Step 3 — the stop rule
 
-There are two ways the run ends, and both finish the same way:
+**The run is `N + up to E`,** where `N` is `checklistCount` in
+`.makefaster/state.json` — every category the live improvement board handed over
+— and `E` is `extrasBudget`, the hypotheses you may add yourself (normally 5).
+`plannedRuns` is their sum. The board decides `N`; nothing here caps it.
 
-- **You got through the work** — every checklist category was tried or skipped
-  and all five of your own hypotheses have been measured. Stop with
-  `stoppedReason: "checklist-complete"`.
-- **The miss streak fired first** — `missStreak` reached `maxMisses`
-  (default **5**) consecutive *measured* attempts with no serious improvement.
-  That limit applies throughout, so it can end the run part-way down the
-  checklist or in the middle of the five extras. Stop with
-  `stoppedReason: "miss-streak"`. (Skips are not misses; only measurements
-  count.)
+You stop when **both** halves are done:
 
-Either way, before you exit:
+1. every checklist category has been tried or skipped, in rank order, and
+2. your extras are done — you spent the budget, or you have no honest hypothesis
+   left worth a measurement and say so.
+
+Then stop with `stoppedReason: "checklist-complete"`. Also stop (with
+`stoppedReason: "user"`) whenever the user asks you to.
+
+**There is no miss limit, and no run count that ends the session.** In
+particular:
+
+- **do not stop at five measurements.** Five is the extras budget, not the size
+  of the run. On a 24-category board the session is 29 iterations long;
+- **a streak of reverts is not a stop condition.** Iterations that miss are the
+  normal texture of walking a ranked list — the top of the board is ranked by
+  what worked on *other* sites, so a run of "already done here / no effect here"
+  says nothing about category 12. Keep walking;
+- **do not cut the checklist short** to get to your own ideas. The extras come
+  after `N`, not instead of the boring end of it;
+- **do not skip a category to save time.** A `[SKIP]` is a judgement that the
+  technique does not apply to this site, with the reason said out loud — not a
+  way to shorten the walk.
+
+Before you exit:
 
 1. Run one final full measurement pass (cold + warm) and write it to
    `results.final`.
@@ -390,11 +420,9 @@ Either way, before you exit:
    you to push anywhere.
 3. Set `stoppedReason`, make sure every iteration is recorded, report
    `[DONE] <one sentence>`, and **exit your session**. The CLI takes over: it
-   shows the user the end screen and asks whether to loop more (it will reset the
-   counter and re-invoke you), submit site stats to the public site leaderboard,
-   and/or submit anonymous improvements data.
-
-Also stop (with `stoppedReason: "user"`) whenever the user asks you to.
+   shows the user the end screen and asks whether to loop more (it re-invokes you
+   to finish anything left, then more extras), submit site stats to the public
+   site leaderboard, and/or submit anonymous improvements data.
 
 ## Discipline (distilled from jjcm/speedupskill)
 
@@ -444,6 +472,7 @@ milliseconds. Deltas are negative when the site got faster.
       "description": "Inline the above-the-fold rules first paint needs and load the rest of the stylesheet asynchronously",
       "category": "Inline Critical CSS",
       "notes": "Extracted the 4.1KB of rules the hero uses out of app.css into <style> in index.html",
+      "phase": "checklist",
       "generic": true,
       "measured": { "cold": { "lcpMs": 2140, "ttiMs": 3700 } },
       "deltaMs": -260,
@@ -456,6 +485,7 @@ milliseconds. Deltas are negative when the site got faster.
       "description": "Render the page without waiting on the client-side flag or auth round trip",
       "category": null,
       "notes": "The session spinner blocked the homepage until the feature-flag SDK resolved",
+      "phase": "extra",
       "generic": false,
       "measured": { "cold": { "lcpMs": 1730, "ttiMs": 3200 } },
       "deltaMs": -410,
@@ -468,6 +498,7 @@ milliseconds. Deltas are negative when the site got faster.
       "description": "Preload the image the largest contentful paint waits on",
       "category": "Preload LCP Image",
       "notes": "Added <link rel=preload> for the first 8 grid thumbnails; LCP regressed, reverted",
+      "phase": "checklist",
       "measured": { "cold": { "lcpMs": 1880, "ttiMs": 3350 } },
       "deltaMs": 150,
       "deltaPct": 6.2,
@@ -476,8 +507,7 @@ milliseconds. Deltas are negative when the site got faster.
   ],
   "genericKeepPct": 50,
   "siteSpecificKeepPct": 50,
-  "missStreak": 5,
-  "stoppedReason": "miss-streak"
+  "stoppedReason": "checklist-complete"
 }
 ```
 
@@ -535,7 +565,10 @@ Field notes:
 - `genericKeepPct` / `siteSpecificKeepPct` — the split above, over kept
   iterations only, as whole percents that add to 100. Submitted with the site
   stats. Leave both out when the run kept nothing.
-- `missStreak` — mirror of the counter in `state.json` at exit time.
-- `stoppedReason` — `"checklist-complete"` when you got through the checklist and
-  your five extras, `"miss-streak"` when the limit fired first, `"user"` when
-  asked to stop, or `null` while running.
+- `iterations[].phase` — `"checklist"` for a category that came off the imported
+  board, `"extra"` for one of your own. This is how the end screen shows how far
+  down the checklist the run actually got, so a session that stopped early cannot
+  read as a finished one.
+- `stoppedReason` — `"checklist-complete"` when the whole checklist was tried or
+  skipped and your extras are done, `"user"` when asked to stop, or `null` while
+  running. There is no miss-streak reason: a miss streak does not stop the run.

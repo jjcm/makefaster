@@ -4,7 +4,7 @@
  * server — it piggybacks on the agent CLIs the user already has and is
  * signed into.
  *
- * One provider is not detected at all. `makefaster` is hosted: the model runs
+ * One provider is not detected at all. `makefaster` is hosted: the models run
  * through makefaster.dev, which holds the OpenRouter credential, so there is no
  * binary to find and no account to be signed into. It is always offered, and it
  * is offered first, because it is the only option that works on a machine with
@@ -30,11 +30,9 @@ import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { HOSTED_MODELS } from "./models.js";
 
 const VERSION_PROBE_TIMEOUT_MS = 5_000;
-
-/** The model the hosted provider runs, pinned by the server too. */
-export const HOSTED_MODEL = "stealth/ox-alpha";
 
 export const PROVIDERS = [
   {
@@ -43,8 +41,10 @@ export const PROVIDERS = [
     // Nothing to detect: the loop runs in this process against the proxy at
     // <api base>/api/openrouter/v1, and the credential stays on the server.
     hosted: true,
-    hostedModel: HOSTED_MODEL,
-    detail: `OpenRouter via makefaster.dev · ${HOSTED_MODEL}`,
+    // The server allowlists these, and the user picks between them like any
+    // other model choice (see lib/models.js). The first is the default.
+    hostedModels: HOSTED_MODELS,
+    detail: `OpenRouter via makefaster.dev · ${HOSTED_MODELS.map((model) => model.label).join(" or ")}`,
     install: "nothing to install — it runs through makefaster.dev",
     executables: [],
     envOverrides: [],
@@ -195,7 +195,7 @@ export function detectProviders(options = {}) {
       error: null,
       hint: null,
       hosted: Boolean(provider.hosted),
-      hostedModel: provider.hostedModel ?? null,
+      hostedModels: provider.hostedModels ?? null,
       detail: provider.detail ?? null,
     };
 

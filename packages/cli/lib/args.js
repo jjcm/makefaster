@@ -1,13 +1,19 @@
 /**
  * Argument parsing for `npx makefaster [dir] [flags]`. Hand-rolled so the CLI
  * stays dependency-free.
+ *
+ * `--max-misses` used to cap the run at n consecutive measurements with no
+ * serious improvement. It is gone: a streak of misses is what walking a ranked
+ * checklist honestly looks like early on, and stopping for it ended sessions
+ * five measurements into a fifty-category list. The flag is still recognized so
+ * it can say that rather than read as a typo.
  */
 
 export const USAGE = `Usage: npx makefaster [dir] [options]
 
 Runs the makefaster autoresearch loop against the site in [dir] (default:
-the current directory), driving either makefaster's own hosted model or an
-agent CLI you already have installed and are signed into. An agent CLI runs
+the current directory), driving either one of makefaster's own hosted models or
+an agent CLI you already have installed and are signed into. An agent CLI runs
 hidden: makefaster keeps the terminal, so its native interface never draws and
 it never asks you to log in, trust the workspace, or approve individual tools.
 
@@ -17,17 +23,23 @@ Options:
                                 "makefaster" is the hosted default: the model
                                 runs through makefaster.dev, so it needs no
                                 local CLI, no account, and no API key of yours.
-  --model <id>                  Skip the model picker and use this model id
-                                (the ids come from the chosen CLI's own model
-                                list; see the picker for the ranked five).
-                                Unused by --cli makefaster, whose model is
-                                pinned by the server.
+  --model <id>                  Skip the model picker and use this model id.
+                                For an agent CLI the ids come from its own model
+                                list (see the picker for the ranked five). For
+                                --cli makefaster it is one of the two the hosted
+                                proxy serves:
+                                  stealth/ox-alpha    (default)
+                                  z-ai/glm-5.2:free
+                                Anything else is refused rather than sent.
   --url <example.com>           The public URL of the site (used for the
                                 site-leaderboard submission)
   --api <base>                  Leaderboard API base
                                 (default: $MAKEFASTER_API_BASE or https://makefaster.dev)
   --improvements <path|url>     Override the improvement-checklist source
-  --max-misses <n>              Stop after n consecutive missed iterations (default 5)
+  --extras <n>                  How many hypotheses of its own the agent may add
+                                after the checklist is finished (default 5, and
+                                it may use fewer). The run is the whole imported
+                                checklist plus these — there is no early stop.
   --no-tui                      Skip the full-screen dashboard and print plain
                                 progress lines (automatic when not a TTY)
   -h, --help                    Show this help
@@ -40,6 +52,14 @@ Environment:
   MAKEFASTER_NO_TUI              Skip the full-screen dashboard
   NO_COLOR                       Disable colors
 `;
+
+/**
+ * How many hypotheses of its own the agent may add once the checklist is done.
+ * The only model-chosen part of the run, and the only budget in it: the
+ * checklist's own length comes from the live board, not from here.
+ */
+export const DEFAULT_EXTRAS = 5;
+const MAX_EXTRAS = 20;
 
 const CLI_ALIASES = new Map([
   // The hosted provider answers to both names: it is makefaster's own option,
@@ -58,7 +78,7 @@ export function parseArgs(argv) {
     url: null,
     api: null,
     improvementsSource: null,
-    maxMisses: 5,
+    extras: DEFAULT_EXTRAS,
     tui: true,
     help: false,
     version: false,
@@ -110,14 +130,22 @@ export function parseArgs(argv) {
         if (value !== null) { i++; args.improvementsSource = value; }
         break;
       }
-      case "--max-misses": {
-        const value = takeValue(argv, i, "--max-misses");
+      case "--extras": {
+        const value = takeValue(argv, i, "--extras");
         if (value !== null) {
           i++;
           const n = Number.parseInt(value, 10);
-          if (!Number.isInteger(n) || n < 1 || n > 100) errors.push("--max-misses must be an integer between 1 and 100");
-          else args.maxMisses = n;
+          if (!Number.isInteger(n) || n < 0 || n > MAX_EXTRAS) errors.push(`--extras must be an integer between 0 and ${MAX_EXTRAS}`);
+          else args.extras = n;
         }
+        break;
+      }
+      case "--max-misses": {
+        // Consume the value so it is not reported a second time as a stray
+        // positional argument.
+        if (takeValue(argv, i, "--max-misses") !== null) i++;
+        errors.push("--max-misses is gone: the loop no longer stops on a miss streak. It runs the " +
+          "whole imported checklist and then up to --extras hypotheses of its own.");
         break;
       }
       default:
