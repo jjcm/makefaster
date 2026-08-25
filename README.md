@@ -150,13 +150,14 @@ no dependencies — raw ANSI, three panels, repainted from
   `Read File`, `approved bash` — which says the agent is busy without ever
   saying what it is doing, and it buried the two lines a reader wanted. It is
   still consumed as the child's heartbeat.
-- **AUTORESEARCH / WEBSITE SPEED** — the loop counter, the current experiment,
-  and every metric the session measured (`lcpMs`, `tbtMs`, `fcpMs`, `ttiMs`,
-  plus `cls` and `score` when the agent records them) as candidate vs baseline.
-  Rows for metrics you did not measure are left out rather than shown empty. The
-  candidate is `results.final` once the last measurement pass has been written,
-  and until then it is the state the kept iterations have walked the site to —
-  so a keep moves the column the moment it is recorded.
+- **AUTORESEARCH / WEBSITE SPEED** — where the loop is (`LOOP 003 OF 029` plus
+  the experiment running now), then one table: a row per metric the session
+  measured (`lcpMs`, `tbtMs`, `fcpMs`, `ttiMs`, plus `cls` and `score` when the
+  agent records them) as candidate, baseline and Δ. Rows for metrics you did not
+  measure are left out rather than shown empty. The candidate is `results.final`
+  once the last measurement pass has been written, and until then it is the state
+  the kept iterations have walked the site to — so a keep moves the column the
+  moment it is recorded.
 - **RUN TIMINGS** — one bar per run on the north-star metric, with a star on the
   best run and a footer carrying the rolling average, the improvement against
   baseline, and the run count. Every measured
