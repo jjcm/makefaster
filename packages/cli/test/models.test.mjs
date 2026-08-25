@@ -2,14 +2,42 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   FAMILY_BEST,
+  HOSTED_MODELS,
   MAX_RECOMMENDATIONS,
   parseCursorModelList,
   benchmarkFamily,
   benchmarkScore,
   defaultModelFor,
   modelsForProvider,
+  resolveHostedModel,
   resolveModel,
 } from "../lib/models.js";
+
+// The hosted provider is a real choice of two, and the ids are what the server's
+// allowlist contains — the picker cannot offer anything the proxy would refuse.
+// These strings are duplicated in backend/internal/inference/proxy.go on purpose:
+// they are a contract, and a contract with one copy is a hope.
+test("the hosted provider offers both allowlisted models, with human labels", () => {
+  assert.deepEqual(HOSTED_MODELS.map((model) => model.id), ["stealth/ox-alpha", "z-ai/glm-5.2:free"]);
+  for (const model of HOSTED_MODELS) {
+    assert.ok(model.label && !model.label.includes("/"), `${model.id} needs a human label`);
+    assert.ok(model.detail, `${model.id} needs a line explaining what it is`);
+  }
+  // The picker starts on the first entry, so the order is the default.
+  assert.equal(HOSTED_MODELS[0].id, "stealth/ox-alpha");
+});
+
+test("resolveHostedModel accepts either id and refuses everything else", () => {
+  for (const model of HOSTED_MODELS) {
+    assert.equal(resolveHostedModel(model.id).id, model.id);
+    // Case is forgiven on the way in; the id that comes back is canonical.
+    assert.equal(resolveHostedModel(model.id.toUpperCase()).id, model.id);
+    assert.equal(resolveHostedModel(` ${model.id} `).id, model.id);
+  }
+  for (const wrong of ["z-ai/glm-5.2", "stealth/ox", "anthropic/claude-opus-4", "gpt-5.6-sol", "", null, undefined]) {
+    assert.equal(resolveHostedModel(wrong), null, String(wrong));
+  }
+});
 
 test("FAMILY_BEST matches the CursorBench 3.2 snapshot best-per-family scores", () => {
   // Straight from CURSOR_BENCHMARKS in jjcm/bb-plugin-autorouter/benchmarks.ts.

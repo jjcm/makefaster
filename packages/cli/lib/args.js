@@ -12,8 +12,8 @@
 export const USAGE = `Usage: npx makefaster [dir] [options]
 
 Runs the makefaster autoresearch loop against the site in [dir] (default:
-the current directory), driving either makefaster's own hosted model or an
-agent CLI you already have installed and are signed into. An agent CLI runs
+the current directory), driving either one of makefaster's own hosted models or
+an agent CLI you already have installed and are signed into. An agent CLI runs
 hidden: makefaster keeps the terminal, so its native interface never draws and
 it never asks you to log in, trust the workspace, or approve individual tools.
 
@@ -23,11 +23,14 @@ Options:
                                 "makefaster" is the hosted default: the model
                                 runs through makefaster.dev, so it needs no
                                 local CLI, no account, and no API key of yours.
-  --model <id>                  Skip the model picker and use this model id
-                                (the ids come from the chosen CLI's own model
-                                list; see the picker for the ranked five).
-                                Unused by --cli makefaster, whose model is
-                                pinned by the server.
+  --model <id>                  Skip the model picker and use this model id.
+                                For an agent CLI the ids come from its own model
+                                list (see the picker for the ranked five). For
+                                --cli makefaster it is one of the two the hosted
+                                proxy serves:
+                                  stealth/ox-alpha    (default)
+                                  z-ai/glm-5.2:free
+                                Anything else is refused rather than sent.
   --url <example.com>           The public URL of the site (used for the
                                 site-leaderboard submission)
   --api <base>                  Leaderboard API base

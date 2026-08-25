@@ -12,8 +12,9 @@
  *
  *   - **hold a credential.** It sends no `authorization` header and reads no
  *     `OPENROUTER_API_KEY`. The server has the key; the CLI has a URL.
- *   - **choose a model.** The proxy pins it, so a model in the request would be
- *     discarded anyway. `--model` is not used by this provider.
+ *   - **decide which models exist.** It names the one the user picked, and the
+ *     proxy refuses anything outside its own allowlist — so the choice is real
+ *     but the set of choices is the server's (see lib/models.js).
  *   - **print anything.** Every line the user sees comes from the dashboard, and
  *     every step it shows comes from the model's own `report_step` calls or from
  *     results.json — the same contract every other provider follows.
@@ -73,6 +74,7 @@ const SYSTEM_PROMPT = [
  * @param {string} args.prompt
  * @param {string} args.cwd
  * @param {string} args.apiBase makefaster server base, e.g. https://makefaster.dev
+ * @param {{id: string}|null} [args.model] the allowlisted model the user picked
  * @param {{update: (entry: object|null) => void, done: () => void}} args.reporter
  * @param {AbortSignal} [args.signal]
  * @param {number|null} [args.plannedRuns] measured iterations this session should hold
@@ -84,6 +86,7 @@ export async function runOpenRouterSession({
   prompt,
   cwd,
   apiBase,
+  model = null,
   reporter,
   signal,
   stepLogPath,
@@ -105,7 +108,7 @@ export async function runOpenRouterSession({
 
     let response;
     try {
-      response = await requestCompletion({ endpoint, messages, fetchImpl, signal });
+      response = await requestCompletion({ endpoint, messages, model, fetchImpl, signal });
     } catch (err) {
       if (signal?.aborted) return stop({ aborted: true });
       return stop({ exitCode: 1, stderrTail: err.message, detail: err.message });
@@ -156,14 +159,19 @@ export async function runOpenRouterSession({
 }
 
 /**
- * One completion. No credential is sent — the server holds it — and no model is
- * named, because the server pins it.
+ * One completion. No credential is sent — the server holds it — and the model is
+ * the id the user picked, verbatim: the proxy allowlists what it will serve, so
+ * an id it does not know comes back as a refusal rather than a surprise bill.
+ * Omitting it lets the server use its own default.
  */
-async function requestCompletion({ endpoint, messages, fetchImpl, signal }) {
+async function requestCompletion({ endpoint, messages, model, fetchImpl, signal }) {
+  const payload = { messages, tools: TOOL_SCHEMAS, tool_choice: "auto", max_tokens: 8192 };
+  if (model?.id) payload.model = model.id;
+
   const res = await fetchImpl(endpoint, {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify({ messages, tools: TOOL_SCHEMAS, tool_choice: "auto", max_tokens: 8192 }),
+    body: JSON.stringify(payload),
     signal,
   });
 

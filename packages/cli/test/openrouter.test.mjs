@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CHAT_COMPLETIONS_PATH, runOpenRouterSession } from "../lib/agents/openrouter.js";
 import { createTools } from "../lib/agents/tools.js";
+import { HOSTED_MODELS } from "../lib/models.js";
 
 function repo() {
   const dir = mkdtempSync(join(tmpdir(), "makefaster-hosted-"));
@@ -77,9 +78,9 @@ test("the hosted session runs the model's tool calls and stops when it stops cal
   assert.ok(reporter.seen.length >= 4);
 });
 
-// The credential lives on the server. The CLI must not send one, and must not
-// name a model — the server pins it.
-test("the hosted session sends no credential and no model", async () => {
+// The credential lives on the server, so the CLI must not send one — whichever
+// model it names.
+test("the hosted session sends no credential", async () => {
   const { dir, steps } = repo();
   const { requests, fetchImpl } = fakeProxy([{ choices: [{ message: { role: "assistant", content: "done" } }] }]);
 
@@ -89,9 +90,31 @@ test("the hosted session sends no credential and no model", async () => {
   const headerNames = Object.keys(init.headers).map((name) => name.toLowerCase());
   assert.equal(headerNames.includes("authorization"), false);
   assert.equal(headerNames.includes("x-api-key"), false);
-  assert.equal("model" in body, false, "the server pins the model");
   assert.equal(JSON.stringify(init).includes("sk-"), false);
   assert.ok(Array.isArray(body.tools) && body.tools.length > 0, "the model needs its tools");
+  // No model picked means the server's default, not a guess made here.
+  assert.equal("model" in body, false);
+});
+
+// The user's choice reaches the proxy verbatim: the id is what the allowlist
+// matches on, so a relabelled or normalized id would be refused server-side.
+test("the hosted session names the model it was given, exactly", async () => {
+  for (const model of HOSTED_MODELS) {
+    const { dir, steps } = repo();
+    const { requests, fetchImpl } = fakeProxy([
+      assistantWithCalls(toolCall("1", "list_dir", { path: "." })),
+      { choices: [{ message: { role: "assistant", content: "done" } }] },
+    ]);
+
+    await runOpenRouterSession({
+      prompt: "go", cwd: dir, apiBase: "https://makefaster.dev", stepLogPath: steps, model, fetchImpl,
+    });
+
+    assert.equal(requests.length, 2);
+    for (const request of requests) {
+      assert.equal(request.body.model, model.id);
+    }
+  }
 });
 
 test("a proxy error becomes a readable reason, not a crash", async () => {

@@ -7,9 +7,10 @@ description: Autoresearch loop that makes the site in this repo measurably faste
 
 You are running inside a makefaster session: the `makefaster` CLI asked the user
 which agent should run the loop and handed you this repo. You are either the
-agent CLI they already had installed, or the hosted model makefaster runs itself
-(`stealth/ox-alpha`, served through makefaster.dev) — the loop is identical
-either way, and so is this file.
+agent CLI they already had installed, or one of the two hosted models makefaster
+runs itself — `stealth/ox-alpha` or `z-ai/glm-5.2:free`, whichever the user
+picked, served through makefaster.dev. The loop is identical either way, and so
+is this file. `state.json` records which one you are.
 
 Your job is to make the site in the current directory measurably faster for real
 users, one disciplined experiment at a time. The discipline is the same as

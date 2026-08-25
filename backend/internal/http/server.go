@@ -140,6 +140,7 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 				Inference: inferenceHealth{
 					Available: s.inference.Available(),
 					Model:     s.inference.Model(),
+					Models:    s.inference.Models(),
 				},
 			})
 		default:
@@ -159,11 +160,12 @@ type healthBody struct {
 }
 
 // inferenceHealth tells the CLI whether the hosted provider will work here
-// before it starts a run. It reports whether a credential is configured — never
-// anything about the credential itself.
+// before it starts a run, and which models it may pick from. It reports whether
+// a credential is configured — never anything about the credential itself.
 type inferenceHealth struct {
-	Available bool   `json:"available"`
-	Model     string `json:"model"`
+	Available bool     `json:"available"`
+	Model     string   `json:"model"`
+	Models    []string `json:"models"`
 }
 
 func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {

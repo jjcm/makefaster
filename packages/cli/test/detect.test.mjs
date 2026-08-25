@@ -64,7 +64,9 @@ test("the hosted provider is offered first without being detected", () => {
     assert.equal(hosted.source, "hosted");
     assert.equal(hosted.executablePath, null);
     assert.equal(hosted.version, null);
-    assert.equal(hosted.hostedModel, "stealth/ox-alpha");
+    // It carries a real choice of models, not one pinned id, and the default is
+    // the one the picker starts on.
+    assert.deepEqual(hosted.hostedModels.map((model) => model.id), ["stealth/ox-alpha", "z-ai/glm-5.2:free"]);
     assert.match(hosted.detail, /openrouter/i);
     // And it does not stop the others from being reported as missing.
     assert.deepEqual(reports.slice(1).map((r) => r.found), [false, false, false]);

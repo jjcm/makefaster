@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -60,24 +61,46 @@ func postInference(t *testing.T, base, body string) (*http.Response, string) {
 	return res, string(payload)
 }
 
-// The whole point of the endpoint: an OpenAI-shaped client sends no credential
-// and gets a completion, and the model it asked for is ignored.
+// The whole point of the endpoint: an OpenAI-shaped client sends no credential,
+// names one of the models on offer, and gets a completion.
 func TestInferenceProxyServesAnOpenAIShapedCompletion(t *testing.T) {
-	upstream, forwarded := fakeUpstream(t, http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":"hello"}}]}`)
+	for _, model := range inference.AllowedModels {
+		upstream, forwarded := fakeUpstream(t, http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":"hello"}}]}`)
+		base := inferenceServer(t, inference.New(fakeKey, upstream.URL, nil)).URL
+
+		res, payload := postInference(t, base, `{"model":"`+model+`","messages":[{"role":"user","content":"hi"}]}`)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("%s: status: got %d, want 200 (%s)", model, res.StatusCode, payload)
+		}
+		if !strings.Contains(payload, "hello") {
+			t.Errorf("%s: the completion was not returned: %s", model, payload)
+		}
+		if got := (*forwarded)[0]["model"]; got != model {
+			t.Errorf("forwarded model: got %v, want %q", got, model)
+		}
+		if strings.Contains(payload, fakeKey) {
+			t.Error("the credential reached the client")
+		}
+	}
+}
+
+// A client that asks for something else gets a 400 that names the alternatives,
+// not a completion billed against a model nobody chose.
+func TestInferenceProxyRefusesAModelItDoesNotServe(t *testing.T) {
+	upstream, forwarded := fakeUpstream(t, http.StatusOK, `{"choices":[]}`)
 	base := inferenceServer(t, inference.New(fakeKey, upstream.URL, nil)).URL
 
 	res, payload := postInference(t, base, `{"model":"anthropic/claude-opus-4","messages":[{"role":"user","content":"hi"}]}`)
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("status: got %d, want 200 (%s)", res.StatusCode, payload)
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400 (%s)", res.StatusCode, payload)
 	}
-	if !strings.Contains(payload, "hello") {
-		t.Errorf("the completion was not returned: %s", payload)
+	for _, model := range inference.AllowedModels {
+		if !strings.Contains(payload, model) {
+			t.Errorf("the 400 should name %q as an option, got %s", model, payload)
+		}
 	}
-	if got := (*forwarded)[0]["model"]; got != inference.PinnedModel {
-		t.Errorf("forwarded model: got %v, want %q", got, inference.PinnedModel)
-	}
-	if strings.Contains(payload, fakeKey) {
-		t.Error("the credential reached the client")
+	if len(*forwarded) != 0 {
+		t.Errorf("a refused model must not reach upstream; got %d", len(*forwarded))
 	}
 }
 
@@ -160,8 +183,9 @@ func TestHealthReportsWhetherTheHostedModelIsAvailable(t *testing.T) {
 
 		var health struct {
 			Inference struct {
-				Available bool   `json:"available"`
-				Model     string `json:"model"`
+				Available bool     `json:"available"`
+				Model     string   `json:"model"`
+				Models    []string `json:"models"`
 			} `json:"inference"`
 		}
 		if err := json.Unmarshal(payload, &health); err != nil {
@@ -170,8 +194,13 @@ func TestHealthReportsWhetherTheHostedModelIsAvailable(t *testing.T) {
 		if health.Inference.Available != test.available {
 			t.Errorf("available: got %v, want %v", health.Inference.Available, test.available)
 		}
-		if health.Inference.Model != inference.PinnedModel {
-			t.Errorf("model: got %q, want %q", health.Inference.Model, inference.PinnedModel)
+		if health.Inference.Model != inference.DefaultModel {
+			t.Errorf("model: got %q, want %q", health.Inference.Model, inference.DefaultModel)
+		}
+		// The CLI checks the model it is about to run against this list, so the
+		// choice it offers is the choice the server will honour.
+		if !reflect.DeepEqual(health.Inference.Models, inference.AllowedModels) {
+			t.Errorf("models: got %v, want %v", health.Inference.Models, inference.AllowedModels)
 		}
 		if strings.Contains(string(payload), fakeKey) {
 			t.Error("health leaked the credential")

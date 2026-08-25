@@ -15,7 +15,7 @@ import (
 //
 // This is the only endpoint that costs money per request, so it is rate limited
 // on its own budget rather than sharing the write endpoints' allowance, and the
-// model is pinned by the proxy (see internal/inference).
+// model has to be one the proxy allowlists (see internal/inference).
 func (s *Server) handleInferenceChat(w http.ResponseWriter, r *http.Request) {
 	if !s.inference.Available() {
 		s.writeJSON(w, http.StatusServiceUnavailable, errorBody(inference.ErrUnavailable.Error()))

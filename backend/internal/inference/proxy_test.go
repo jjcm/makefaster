@@ -51,39 +51,111 @@ func request(t *testing.T, body string) []byte {
 	return []byte(body)
 }
 
-// The model is the server's decision. Whatever the client asks for is discarded,
-// because the client is spending somebody else's credential.
-func TestChatCompletionsPinsTheModel(t *testing.T) {
+// The user picks the model, from the set the server is willing to spend its
+// credential on. Every id on that list is forwarded exactly as asked for.
+func TestChatCompletionsForwardsEveryAllowlistedModel(t *testing.T) {
+	if len(inference.AllowedModels) < 2 {
+		t.Fatalf("the hosted provider is meant to offer a choice, got %v", inference.AllowedModels)
+	}
+	for _, model := range inference.AllowedModels {
+		fake := newUpstream(t)
+		proxy := inference.New(fakeKey, fake.server.URL, nil)
+
+		body := `{"model":"` + model + `","messages":[{"role":"user","content":"hi"}],"max_tokens":900000}`
+		status, payload, err := proxy.ChatCompletions(context.Background(), request(t, body))
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", model, err)
+		}
+		if status != http.StatusOK {
+			t.Errorf("%s: status %d", model, status)
+		}
+		if !strings.Contains(string(payload), "assistant") {
+			t.Errorf("%s: upstream body was not returned: %s", model, payload)
+		}
+		if len(fake.requests) != 1 {
+			t.Fatalf("%s: expected 1 forwarded request, got %d", model, len(fake.requests))
+		}
+		if got := fake.requests[0]["model"]; got != model {
+			t.Errorf("forwarded model: got %v, want %q", got, model)
+		}
+		if tokens, ok := fake.requests[0]["max_tokens"].(float64); !ok || tokens > 8192 {
+			t.Errorf("%s: max_tokens: got %v, want a value capped at 8192", model, fake.requests[0]["max_tokens"])
+		}
+	}
+}
+
+// Naming no model is the one case that gets a substitution, and it gets the
+// default rather than whatever the client last sent.
+func TestChatCompletionsDefaultsTheModelWhenNoneIsAskedFor(t *testing.T) {
 	fake := newUpstream(t)
 	proxy := inference.New(fakeKey, fake.server.URL, nil)
 
 	for _, body := range []string{
 		`{"messages":[{"role":"user","content":"hi"}]}`,
-		`{"model":"anthropic/claude-opus-4","messages":[{"role":"user","content":"hi"}]}`,
-		`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hi"}],"max_tokens":900000}`,
+		`{"model":"","messages":[{"role":"user","content":"hi"}]}`,
+		`{"model":"  ","messages":[{"role":"user","content":"hi"}]}`,
 	} {
-		status, payload, err := proxy.ChatCompletions(context.Background(), request(t, body))
-		if err != nil {
+		if _, _, err := proxy.ChatCompletions(context.Background(), request(t, body)); err != nil {
 			t.Fatalf("%s: unexpected error: %v", body, err)
 		}
-		if status != http.StatusOK {
-			t.Errorf("%s: status %d", body, status)
-		}
-		if !strings.Contains(string(payload), "assistant") {
-			t.Errorf("%s: upstream body was not returned: %s", body, payload)
-		}
-	}
-
-	if len(fake.requests) != 3 {
-		t.Fatalf("expected 3 forwarded requests, got %d", len(fake.requests))
 	}
 	for i, forwarded := range fake.requests {
-		if forwarded["model"] != inference.PinnedModel {
-			t.Errorf("request %d model: got %v, want %q", i, forwarded["model"], inference.PinnedModel)
+		if forwarded["model"] != inference.DefaultModel {
+			t.Errorf("request %d model: got %v, want %q", i, forwarded["model"], inference.DefaultModel)
 		}
-		if tokens, ok := forwarded["max_tokens"].(float64); !ok || tokens > 8192 {
-			t.Errorf("request %d max_tokens: got %v, want a value capped at 8192", i, forwarded["max_tokens"])
+	}
+}
+
+// The choice is between the allowlisted ids, and that is the whole choice. This
+// is not an arbitrary-model proxy: an id nobody chose is refused before it can
+// cost anything, and the refusal names what the caller could have asked for.
+func TestChatCompletionsRefusesAModelThatIsNotOnTheAllowlist(t *testing.T) {
+	fake := newUpstream(t)
+	proxy := inference.New(fakeKey, fake.server.URL, nil)
+
+	for _, body := range []string{
+		`{"model":"anthropic/claude-opus-4","messages":[{"role":"user","content":"hi"}]}`,
+		`{"model":"openai/gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
+		`{"model":"stealth/ox-alpha-turbo","messages":[{"role":"user","content":"hi"}]}`,
+	} {
+		_, _, err := proxy.ChatCompletions(context.Background(), request(t, body))
+		var invalid *inference.InvalidRequestError
+		if !errors.As(err, &invalid) {
+			t.Errorf("%s: got error %v, want an InvalidRequestError", body, err)
+			continue
 		}
+		if !strings.Contains(invalid.Reason, inference.DefaultModel) {
+			t.Errorf("%s: the refusal should name what is on offer, got %q", body, invalid.Reason)
+		}
+	}
+	// And a model that is not even a name is a client mistake, not a default.
+	_, _, err := proxy.ChatCompletions(context.Background(), request(t, `{"model":42,"messages":[{"role":"user","content":"hi"}]}`))
+	var invalid *inference.InvalidRequestError
+	if !errors.As(err, &invalid) || !strings.Contains(invalid.Reason, "must be a string") {
+		t.Errorf("a non-string model: got %v", err)
+	}
+
+	if len(fake.requests) != 0 {
+		t.Errorf("a refused model must not reach upstream; got %d requests", len(fake.requests))
+	}
+}
+
+// The allowlist is the server's, so a caller cannot grow it.
+func TestModelsIsACopyOfTheAllowlist(t *testing.T) {
+	proxy := inference.New(fakeKey, "https://example.invalid/v1", nil)
+	models := proxy.Models()
+	if len(models) != len(inference.AllowedModels) {
+		t.Fatalf("Models(): got %v, want %v", models, inference.AllowedModels)
+	}
+	models[0] = "somebody/elses-model"
+	if inference.AllowedModels[0] == "somebody/elses-model" {
+		t.Error("Models() handed out the allowlist itself")
+	}
+	if !inference.ModelAllowed(inference.DefaultModel) {
+		t.Errorf("the default model %q is not on the allowlist", inference.DefaultModel)
+	}
+	if inference.ModelAllowed("somebody/elses-model") {
+		t.Error("ModelAllowed said yes to a model nobody chose")
 	}
 }
 
