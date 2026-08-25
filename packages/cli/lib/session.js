@@ -48,7 +48,18 @@ function excludeFromGit(cwd) {
   }
 }
 
-export function prepareSession({ cwd, provider, model, checklist, checklistSource, apiBase, maxMisses, siteUrl }) {
+/**
+ * The size of the run: every imported checklist category, plus the extras the
+ * agent may choose for itself. N is whatever the board had when the checklist
+ * was imported — an empty board means the run is only the extras.
+ */
+export function runPlan(checklist, extras) {
+  const checklistCount = Array.isArray(checklist) ? checklist.length : 0;
+  const extrasBudget = Number.isInteger(extras) && extras >= 0 ? extras : 0;
+  return { checklistCount, extrasBudget, plannedRuns: checklistCount + extrasBudget };
+}
+
+export function prepareSession({ cwd, provider, model, checklist, checklistSource, apiBase, extras, siteUrl }) {
   const paths = sessionPaths(cwd);
   mkdirSync(paths.dir, { recursive: true });
   copyFileSync(SKILL_SOURCE, paths.skill);
@@ -57,16 +68,16 @@ export function prepareSession({ cwd, provider, model, checklist, checklistSourc
   // run's steps.
   writeFileSync(paths.steps, "");
 
+  const plan = runPlan(checklist, extras);
   const state = {
-    version: 1,
+    version: 2,
     provider: provider.key,
     model: model?.id ?? null,
     modelLabel: model?.label ?? null,
     startedAt: new Date().toISOString(),
     apiBase,
     siteUrl: siteUrl || null,
-    maxMisses,
-    missStreak: 0,
+    ...plan,
     round: 1,
   };
   writeFileSync(paths.state, JSON.stringify(state, null, 2) + "\n");
@@ -97,34 +108,65 @@ export function readResults(cwd) {
   }
 }
 
-export function kickoffPrompt() {
+/**
+ * The size of the run, spelled out in the words the agent is given it in. The
+ * numbers are in state.json too, but a model that is told "this is a 29-run
+ * session" up front does not treat run 5 as a natural place to stop.
+ */
+function planSentence({ checklistCount, extrasBudget, plannedRuns }) {
+  const categories = `${checklistCount} imported checklist ${checklistCount === 1 ? "category" : "categories"}`;
+  if (checklistCount === 0) {
+    return `The checklist came back empty, so this run is just up to ${extrasBudget} hypotheses of your own.`;
+  }
+  if (extrasBudget === 0) {
+    return `This run is ${categories} and no extras: up to ${plannedRuns} measured iterations.`;
+  }
+  return `This run is ${categories} plus up to ${extrasBudget} hypotheses of your own — ` +
+    `up to ${plannedRuns} measured iterations in total.`;
+}
+
+/**
+ * The one thing every prompt has to say, because it is the rule a model breaks
+ * by default: a handful of reverted experiments is not a reason to stop.
+ */
+const NO_EARLY_STOP = [
+  "There is no early stop and no miss limit: a run of iterations that all revert is",
+  "what walking a ranked checklist honestly looks like, so keep going. Stop only when",
+  "every category has been tried or skipped and your extras are done.",
+].join(" ");
+
+export function kickoffPrompt(plan) {
   return [
     "Read .makefaster/SKILL.md and follow it exactly. It defines the makefaster",
     "performance loop for the site in this repo: baseline a user-felt metric,",
-    "then walk .makefaster/improvements.json in rank order, one category per",
-    "iteration — skip what plainly does not apply, implement the smallest change",
-    "for what does, measure, keep it only if it beats the noise floor, otherwise",
-    "revert — and finish with exactly 5 hypotheses of your own. Loop limits live",
-    "in .makefaster/state.json — stop when missStreak reaches maxMisses. Keep",
-    ".makefaster/results.json valid and up to date after every iteration (schema",
-    "is in the skill); the CLI reads it when you exit. Report each step as one",
-    "tagged line appended to .makefaster/thinking.log — that file is the only",
-    "thing the user's dashboard shows, so write it as you go and keep tool",
-    "output out of it.",
+    "then walk EVERY category in .makefaster/improvements.json in rank order, one",
+    "per iteration — skip only what plainly does not apply here (a skip is not an",
+    "iteration), implement the smallest change for what does, measure, keep it",
+    "only if it beats the noise floor, otherwise revert — and only once the whole",
+    `checklist is done, add up to ${plan.extrasBudget} hypotheses of your own.`,
+    planSentence(plan),
+    "The counts are in .makefaster/state.json.",
+    NO_EARLY_STOP,
+    "Keep .makefaster/results.json valid and up to date after every iteration",
+    "(schema is in the skill); the CLI reads it when you exit. Report each step as",
+    "one tagged line appended to .makefaster/thinking.log — that file is the only",
+    "thing the user's dashboard shows, so write it as you go and keep tool output",
+    "out of it.",
   ].join(" ");
 }
 
-export function continuePrompt() {
+export function continuePrompt(plan) {
   return [
-    "Continue the makefaster performance loop in this repo. The user chose to",
-    "loop more, so the miss counter in .makefaster/state.json was reset. Re-read",
-    ".makefaster/SKILL.md for the rules and .makefaster/results.json for what",
-    "was already tried (do not repeat reverted experiments without a new reason).",
-    "Resume where the order left off: any remaining checklist categories first,",
-    "then your own hypotheses. Same discipline: one hypothesis per iteration,",
-    "measure, keep or revert, update results.json every iteration, keep appending",
-    "one tagged line per step to .makefaster/thinking.log, and stop when",
-    "missStreak reaches maxMisses.",
+    "Continue the makefaster performance loop in this repo. The user chose to loop",
+    "more. Re-read .makefaster/SKILL.md for the rules and .makefaster/results.json",
+    "for what was already tried (do not repeat reverted experiments without a new",
+    "reason). Resume where the order left off: every remaining checklist category",
+    "first, in rank order, then your own hypotheses.",
+    planSentence(plan),
+    "Same discipline: one hypothesis per iteration, measure, keep or revert, update",
+    "results.json every iteration, keep appending one tagged line per step to",
+    ".makefaster/thinking.log.",
+    NO_EARLY_STOP,
   ].join(" ");
 }
 
@@ -145,17 +187,22 @@ export function continuePrompt() {
  * `authRequired` means the install is signed out. makefaster never fixes that
  * itself: no login, no browser, no injected API key.
  *
+ * `plannedRuns` is how many measured iterations the session is supposed to
+ * contain (see runPlan). Only the hosted provider needs it, and only to size
+ * its own runaway guard.
+ *
  * @returns {Promise<{exitCode: number, stderrTail: string, eventCount: number, lastLabel: string|null, aborted: boolean, authRequired: boolean, detail: string|null}>}
  */
-export async function runAgent({ provider, prompt, cwd, model = null, env = process.env, reporter, signal, apiBase }) {
+export async function runAgent({ provider, prompt, cwd, model = null, env = process.env, reporter, signal, apiBase, plannedRuns = null }) {
   const progress = reporter ?? createProgressReporter();
   const runners = {
     cursor: runAcpSession,
     claude: runClaudeSession,
     codex: runCodexSession,
-    // The hosted provider needs the server it runs on and the step log it
-    // reports through; it has no executable and no model of its own.
-    makefaster: (args) => runOpenRouterSession({ ...args, apiBase, stepLogPath: sessionPaths(cwd).steps }),
+    // The hosted provider needs the server it runs on, the step log it reports
+    // through, and the size of the run — it has no child process to outlive it,
+    // so its own turn budget is the only thing that can cut the walk short.
+    makefaster: (args) => runOpenRouterSession({ ...args, apiBase, plannedRuns, stepLogPath: sessionPaths(cwd).steps }),
   };
   const runner = runners[provider.key];
   if (!runner) throw new Error(`no protocol runner is defined for provider "${provider.key}"`);

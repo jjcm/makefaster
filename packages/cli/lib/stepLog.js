@@ -38,7 +38,7 @@ export const STEP_TAGS = Object.freeze([
   "SKIP",         // a checklist category that does not apply here, and why
   "TRY",          // implementing one hypothesis
   "RESULT",       // what the measurement said
-  "EXTRA",        // the five follow-ups chosen after the checklist
+  "EXTRA",        // the follow-ups the agent chose once the checklist was done
   "DONE",         // finished, with the reason
 ]);
 

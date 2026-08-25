@@ -16,8 +16,10 @@ const RESULTS = {
     { n: 2, name: "Preload thumbnails", deltaMs: 150, deltaPct: 6.6, kept: false },
     { n: 3, name: "Convert hero to AVIF", deltaMs: -600, deltaPct: -26.3, kept: true },
   ],
-  missStreak: 0,
 };
+
+/** The run plan the CLI writes into state.json (see session.runPlan). */
+const STATE = { round: 1, checklistCount: 24, extrasBudget: 5, plannedRuns: 29 };
 
 const text = (rows) => rows.map(plainText).join("\n");
 
@@ -210,7 +212,7 @@ test("buildDashboard renders all three panels with their real numbers", () => {
   const frame = text(buildDashboard({
     size: { columns: 120, rows: 44 },
     results: RESULTS,
-    state: { round: 1 },
+    state: STATE,
     provider: { displayName: "Cursor Agent" },
     model: { id: "claude-fable-5-max", label: "Claude Fable 5 (max)" },
     status: "RUNNING",
@@ -292,6 +294,34 @@ test("buildDashboard survives an empty session and a half-written file", () => {
     assert.match(frame, /AUTORESEARCH \/ WEBSITE SPEED/);
     assert.match(frame, /waiting for the first baseline measurement/);
   }
+});
+
+// The counter is a position in a planned run, not a tally: "LOOP 005" on its own
+// reads like an ending on a board with 24 categories still to walk.
+test("the loop counter shows the run's planned length, and the panel says what it is made of", () => {
+  const frame = text(buildDashboard({
+    size: { columns: 120, rows: 44 },
+    results: RESULTS,
+    state: STATE,
+    log: [],
+  }));
+  assert.match(frame, /LOOP 003 OF 029/);
+  assert.match(frame, /24 checklist \+ up to 5 extra/);
+  assert.match(frame, /round 1/);
+});
+
+// A round from an older session, or one recorded before the plan existed, still
+// renders — it just says less.
+test("the loop counter falls back to a bare count without a plan", () => {
+  const frame = text(buildDashboard({
+    size: { columns: 120, rows: 44 },
+    results: RESULTS,
+    state: { round: 2 },
+    log: [],
+  }));
+  assert.match(frame, /LOOP 003/);
+  assert.doesNotMatch(frame, /LOOP 003 OF/);
+  assert.match(frame, /round 2/);
 });
 
 test("a long log keeps only what fits, newest last", () => {

@@ -25,11 +25,23 @@ import { TOOL_SCHEMAS, createTools, describeToolCall } from "./tools.js";
 export const CHAT_COMPLETIONS_PATH = "/api/openrouter/v1/chat/completions";
 
 /**
- * Enough turns for a full loop — a baseline, a walk down the checklist and five
- * extras is a long conversation — and a hard stop so a model that gets stuck in
- * a tool cycle cannot bill forever.
+ * The runaway guard, and the only thing on this side that can end a session
+ * early — so it is sized from the run rather than fixed. A measured iteration
+ * costs a handful of turns (read, edit, build, measure, record), and the walk is
+ * as long as the board is, so a flat ceiling silently truncated the checklist on
+ * any site with a real one.
+ *
+ * The ceiling is still a ceiling: a model stuck in a tool cycle cannot bill
+ * forever.
  */
-const MAX_TURNS = 400;
+const BASE_TURNS = 120;
+const TURNS_PER_RUN = 40;
+const TURN_CEILING = 4000;
+
+export function turnBudget(plannedRuns) {
+  const runs = Number.isFinite(plannedRuns) && plannedRuns > 0 ? Math.floor(plannedRuns) : 5;
+  return Math.min(TURN_CEILING, BASE_TURNS + runs * TURNS_PER_RUN);
+}
 
 /** How many messages of history to keep before dropping the oldest results. */
 const MAX_HISTORY = 80;
@@ -47,6 +59,10 @@ const SYSTEM_PROMPT = [
   "  2. keep .makefaster/results.json valid after every iteration — it is the only record",
   "     that survives you, and the CLI reads it the moment you stop.",
   "",
+  "The session is the whole imported checklist plus the few extras the skill allows you",
+  "at the end — not the first handful of experiments. Iterations that revert are normal",
+  "and are not a reason to stop; there is no miss limit.",
+  "",
   "Stop when the skill says to stop, and say so with a final report_step. Do not ask",
   "questions, do not summarize instead of working, and never fabricate a measurement.",
 ].join("\n");
@@ -59,6 +75,7 @@ const SYSTEM_PROMPT = [
  * @param {string} args.apiBase makefaster server base, e.g. https://makefaster.dev
  * @param {{update: (entry: object|null) => void, done: () => void}} args.reporter
  * @param {AbortSignal} [args.signal]
+ * @param {number|null} [args.plannedRuns] measured iterations this session should hold
  * @param {typeof fetch} [args.fetchImpl] test seam
  * @param {number} [args.maxTurns] test seam
  * @returns {Promise<{exitCode: number, stderrTail: string, aborted: boolean, authRequired: boolean, detail: string|null}>}
@@ -70,8 +87,9 @@ export async function runOpenRouterSession({
   reporter,
   signal,
   stepLogPath,
+  plannedRuns = null,
   fetchImpl = fetch,
-  maxTurns = MAX_TURNS,
+  maxTurns = turnBudget(plannedRuns),
 }) {
   const endpoint = `${String(apiBase || "").replace(/\/$/, "")}${CHAT_COMPLETIONS_PATH}`;
   const tools = createTools({ cwd, stepLogPath, signal });

@@ -28,6 +28,7 @@ import {
   prepareSession,
   readResults,
   runAgent,
+  runPlan,
   writeState,
 } from "../lib/session.js";
 import { ARROW, FAIL, OK, banner, bold, cyan, dim, red, yellow } from "../lib/ui.js";
@@ -42,6 +43,21 @@ function fail(message, code = 1) {
 
 function indent(text) {
   return text.split(/\r?\n/).map((line) => `    ${line}`).join("\n");
+}
+
+/**
+ * How long the run is, in the two numbers that decide it: the checklist the
+ * board handed over, and the extras the agent may add to it.
+ */
+function planLabel({ checklistCount, extrasBudget, plannedRuns }) {
+  if (checklistCount === 0) {
+    return `plan: the checklist is empty, so this run is up to ${extrasBudget} hypotheses of the agent's own`;
+  }
+  const categories = `${checklistCount} checklist ${checklistCount === 1 ? "category" : "categories"}`;
+  if (extrasBudget === 0) {
+    return `plan: ${categories}, no extras — up to ${plannedRuns} measured runs`;
+  }
+  return `plan: ${categories} + up to ${extrasBudget} of the agent's own — up to ${plannedRuns} measured runs`;
 }
 
 async function pickProvider(reports, cliFlag) {
@@ -211,7 +227,12 @@ async function runRoundInDashboard({ provider, prompt, cwd, model, paths, state,
   view.append("INITIALIZING", `Round ${state.round}: driving ${provider.displayName} headlessly${model ? ` on ${model.id}` : ""}.`);
   view.render();
   try {
-    const result = await runAgent({ provider, prompt, cwd, model, apiBase, reporter: view.reporter, signal: controller.signal });
+    const result = await runAgent({
+      provider, prompt, cwd, model, apiBase,
+      plannedRuns: state.plannedRuns,
+      reporter: view.reporter,
+      signal: controller.signal,
+    });
     view.setStatus(result.aborted ? "STOPPED" : "DONE");
     view.flush();
     return result;
@@ -261,7 +282,12 @@ async function main() {
   } catch (err) {
     fail(err.message);
   }
-  console.log(`  ${OK} imported ${bold(checklist.categories.length)} improvement categories ${dim(`from ${checklist.source}`)}\n`);
+  console.log(`  ${OK} imported ${bold(checklist.categories.length)} improvement categories ${dim(`from ${checklist.source}`)}`);
+
+  // The run's size, said out loud before it starts: the board decides how long
+  // the walk is, and the only budget makefaster imposes is the extras.
+  const plan = runPlan(checklist.categories, args.extras);
+  console.log(`  ${cyan(ARROW)} ${bold(planLabel(plan))} ${dim("— the loop runs the whole checklist; it does not stop on a miss streak")}\n`);
 
   if (!existsSync(join(cwd, ".git"))) {
     console.log(yellow("  note: this directory is not a git repo — the loop relies on git for"));
@@ -277,12 +303,12 @@ async function main() {
     checklist: checklist.categories,
     checklistSource: checklist.source,
     apiBase,
-    maxMisses: args.maxMisses,
+    extras: args.extras,
     siteUrl: args.url,
   });
 
   const useTui = args.tui && tuiSupported();
-  let prompt = kickoffPrompt();
+  let prompt = kickoffPrompt(plan);
   for (;;) {
     console.log(`  ${cyan(ARROW)} running the loop in ${bold(provider.displayName)} ${dim(`(round ${state.round})`)} — hidden, no prompts; this can take a while.`);
     if (useTui) console.log(dim("  makefaster takes the screen while it runs; press q to stop the round.\n"));
@@ -290,7 +316,7 @@ async function main() {
 
     const { exitCode, stderrTail, aborted, authRequired, detail } = useTui
       ? await runRoundInDashboard({ provider, prompt, cwd, model, paths, state, apiBase })
-      : await runAgent({ provider, prompt, cwd, model, apiBase });
+      : await runAgent({ provider, prompt, cwd, model, apiBase, plannedRuns: state.plannedRuns });
 
     // A signed-out install can only be certain once the child has spoken.
     if (authRequired) fail(signedOutGuidance(provider, detail || stderrTail), 3);
@@ -306,18 +332,16 @@ async function main() {
     const { loopMore } = await runEndScreen({ results, state, paths });
     if (!loopMore) break;
 
-    state.missStreak = 0;
     state.round += 1;
     writeState(cwd, state);
     if (results && !results.parseError) {
-      results.missStreak = 0;
       results.stoppedReason = null;
       try {
         const { writeFileSync } = await import("node:fs");
         writeFileSync(paths.results, JSON.stringify(results, null, 2) + "\n");
       } catch { /* the agent re-reads state.json either way */ }
     }
-    prompt = continuePrompt();
+    prompt = continuePrompt(plan);
   }
 }
 

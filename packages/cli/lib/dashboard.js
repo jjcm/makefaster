@@ -334,11 +334,15 @@ function autoresearchPanel({ width, height, results, state, status, updatedAt })
   const tableWidth = showTable ? Math.min(46, Math.max(38, Math.floor(inner * 0.44))) : 0;
   const leftWidth = showTable ? inner - tableWidth - 5 : inner - 2;
 
+  // The loop counter reads as a position in the run, not a tally: a session on a
+  // 24-category board is 29 runs long, and "LOOP 005" alone looks like an ending.
+  const planned = Number.isFinite(state?.plannedRuns) && state.plannedRuns > 0 ? state.plannedRuns : null;
   const body = [];
   body.push([
     seg(`LOOP ${String(loop).padStart(3, "0")}`, "heading"),
+    seg(planned ? ` OF ${String(planned).padStart(3, "0")}` : "", "muted"),
     seg("   CURRENT EXPERIMENT: ", "label"),
-    seg(fit(currentExperiment, Math.max(0, inner - 30)), "accent"),
+    seg(fit(currentExperiment, Math.max(0, inner - (planned ? 38 : 30))), "accent"),
   ]);
   body.push([
     seg("STATUS: ", "label"), seg(pad(status, 9), "value"),
@@ -372,11 +376,24 @@ function autoresearchPanel({ width, height, results, state, status, updatedAt })
     width,
     height,
     title: "AUTORESEARCH / WEBSITE SPEED",
-    titleRight: state?.round ? `round ${state.round}` : null,
+    titleRight: planTitle(state),
     // The measurement conditions are part of reading the numbers honestly, so
     // the footer keeps its row and the metric list is what gives way.
     body: footer ? withReservedFooter(body, [seg(fit(footer, inner), "muted")], height - 2) : body,
   });
+}
+
+/**
+ * The panel's top-right note: the round, plus what the run is made of, so the
+ * checklist's length is visible while it is being walked.
+ */
+function planTitle(state) {
+  const parts = [];
+  if (state?.round) parts.push(`round ${state.round}`);
+  if (Number.isFinite(state?.checklistCount) && Number.isFinite(state?.extrasBudget)) {
+    parts.push(`${state.checklistCount} checklist + up to ${state.extrasBudget} extra`);
+  }
+  return parts.length > 0 ? parts.join("  |  ") : null;
 }
 
 function withReservedFooter(body, footer, capacity) {

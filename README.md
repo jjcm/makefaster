@@ -54,22 +54,23 @@ What happens:
    live leaderboard, falling back to the technique catalog bundled at
    [`packages/cli/data/improvements.json`](packages/cli/data/improvements.json)
    while the public board is still filling up. Either way that ranked list is
-   the order the loop works in.
+   the order the loop works in, and **its length is the length of the run** (see
+   [The run is N + up to 5](#the-run-is-n--up-to-5)).
 6. **Runs the agent CLI hidden** with the loop skill
    ([`packages/skill/SKILL.md`](packages/skill/SKILL.md)): profile a
    user-felt metric (Lighthouse if available; cold + warm; median of ≥3 runs),
-   then walk the imported checklist in rank order — one category per iteration,
-   skipping what plainly does not apply — and finish with exactly five
-   hypotheses of the agent's own. Measure each one, keep it if it beats the
+   then walk the whole imported checklist in rank order — one category per
+   iteration, skipping only what plainly does not apply — and finish with up to
+   five hypotheses of the agent's own. Measure each one, keep it if it beats the
    noise floor, revert otherwise. The other product's interface never draws and never
    prompts you (see [The native CLI stays hidden](#the-native-cli-stays-hidden));
    makefaster shows [its own dashboard](#the-dashboard) instead.
-7. **Stops when the checklist and the five extras are done** — or earlier,
-   after 5 consecutive misses (no serious improvement: ≥5% or ≥20 ms on the
-   north-star metric, and FCP-only wins that regress LCP don't count) — then
+7. **Stops when the whole checklist has been walked and the extras are done** —
+   not at five runs, and not because several attempts in a row missed — then
    leaves the dashboard and shows the end screen with three
    questions:
-   - **Loop more?** — resets the miss counter and continues.
+   - **Loop more?** — another round: whatever is left of the checklist first,
+     then more extras.
    - **Submit stats to the Site leaderboard?** — your URL and favicon are
      displayed publicly with the measured LCP/TTI improvements, and the row
      links to the pull request the run was opened as when there is one.
@@ -87,15 +88,48 @@ Usage: npx makefaster [dir] [options]
   --url <example.com>           Site URL for the leaderboard submission
   --api <base>                  Leaderboard API base (default https://makefaster.dev)
   --improvements <path|url>     Override the checklist source
-  --max-misses <n>              Stop after n straight misses (default 5)
+  --extras <n>                  Hypotheses of its own the agent may add after
+                                the checklist (default 5, and it may use fewer)
   --no-tui                      Plain progress lines instead of the dashboard
 ```
 
 Session state lives in `.makefaster/` in the target repo (auto-excluded from
 git via `.git/info/exclude`): `SKILL.md` and `improvements.json` are what the
-CLI hands the agent, `state.json` records the chosen provider, model and loop
-limits, and the agent writes back `results.json` (the record the CLI reads) and
-`thinking.log` (one tagged line per step, which is what the dashboard shows).
+CLI hands the agent, `state.json` records the chosen provider, model and the run
+plan (`checklistCount`, `extrasBudget`, `plannedRuns`), and the agent writes back
+`results.json` (the record the CLI reads) and `thinking.log` (one tagged line per
+step, which is what the dashboard shows).
+
+### The run is N + up to 5
+
+A session is **every category on the live improvement board, plus up to five
+hypotheses the agent picks itself.** `N` is whatever
+[makefaster.dev/data/improvements.json](https://makefaster.dev/data/improvements.json)
+is carrying when the checklist is imported — 24 categories today, so 29 runs —
+and nothing in the CLI caps it. An empty board means `N` is 0 and the run is just
+the extras.
+
+What that rules out, because it is what the loop used to do:
+
+- **it does not stop at five runs.** Five is the extras budget, not the size of
+  the session;
+- **it does not stop on a miss streak.** `--max-misses` is gone. Stopping after
+  five consecutive measurements with no serious improvement sounds like
+  discipline and behaves like starvation: the board is ranked by what worked on
+  *other* sites, so the first few categories on any given site are often
+  "already done here" or "no effect here", and the run ended five measurements
+  into a fifty-category list. A revert costs an iteration and nothing else;
+- **it does not let the agent cut the walk short** to get to its own ideas. The
+  extras come after the checklist, not instead of the dull end of it.
+
+A `[SKIP]` is still free and still expected — a category that plainly does not
+apply to this stack costs no measurement, gets no row in `results.json` and no
+timing bar. Skips are a judgement about the site, not a shortcut.
+
+The keep/revert rules are unchanged: LCP is the north star, a keep has to beat
+the measured noise floor **and** move it by ≥5% or ≥20 ms, an FCP-only win that
+regresses LCP does not count, and `results.json` is rewritten with real numbers
+after every measurement.
 
 ## The dashboard
 
@@ -247,7 +281,7 @@ through, so a model released after this snapshot still works.
 
 | file | what |
 |---|---|
-| [`packages/skill/SKILL.md`](packages/skill/SKILL.md) | the **operational loop** the CLI hands to your agent: profiling rules, one-hypothesis iterations, the keep/revert bar, the 5-miss stop rule, and the `results.json` contract |
+| [`packages/skill/SKILL.md`](packages/skill/SKILL.md) | the **operational loop** the CLI hands to your agent: profiling rules, one-hypothesis iterations, the keep/revert bar, the "whole checklist plus up to five extras" stop rule, and the `results.json` contract |
 | [`skill/SKILL.md`](skill/SKILL.md) | the **canonical technique catalog** — the updated [jjcm/speedupskill](https://github.com/jjcm/speedupskill) `SKILL.md` (measured wins, traps, keep/ditch discipline). Canonical here because a PR to that repo could not be opened from this environment; see [`skill/README.md`](skill/README.md) |
 
 ## Run locally
