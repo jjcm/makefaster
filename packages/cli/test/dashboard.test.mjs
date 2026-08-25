@@ -248,15 +248,19 @@ test("buildDashboard renders all three panels with their real numbers", () => {
   assert.match(frame, /exp_000/);
   assert.match(frame, /profiler: lighthouse 12\.x/);
 
-  // Bottom panel: bars, axis labels, legend, footer stats.
+  // Bottom panel: bars, axis labels, footer stats. The chart is bars and
+  // numbers — no legend block and no reference line drawn through the plot.
   assert.match(frame, /Lower is better/);
   assert.match(frame, /1680/);
   assert.match(frame, /2420/);
-  assert.match(frame, /★ BEST exp_003/);
-  assert.match(frame, /BASELINE exp_000/);
+  assert.match(frame, /★1680/, "the best run keeps its star");
   assert.match(frame, /ROLLING AVERAGE \(last 5 runs\)/);
   assert.match(frame, /TOTAL RUNS: 4/);
   assert.match(frame, /IMPROVEMENT vs BASELINE: -30\.6%/);
+  assert.doesNotMatch(frame, /BEST exp_/);
+  assert.doesNotMatch(frame, /BASELINE exp_/);
+  assert.doesNotMatch(frame, /OTHER RUNS/);
+  assert.doesNotMatch(frame, /╌/);
 });
 
 // Mid-run, before results.final exists: the panels must have moved off the

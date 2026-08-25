@@ -455,7 +455,6 @@ export function niceMax(value) {
 }
 
 const AXIS_WIDTH = 6;
-const LEGEND_WIDTH = 30;
 
 /**
  * Gridline labels for the y axis: round multiples of a nice step, placed on the
@@ -473,7 +472,7 @@ function axisGridLabels({ max, cellValue, plotHeight }) {
   return labels;
 }
 
-/** BOTTOM — a bar per run, a dashed baseline, and a star on the best one. */
+/** BOTTOM — a bar per run, with a star on the best one. */
 function timingsPanel({ width, height, results }) {
   const inner = width - 4;
   const { runs, baseline, best, key } = deriveRuns(results);
@@ -487,8 +486,7 @@ function timingsPanel({ width, height, results }) {
     });
   }
 
-  const showLegend = inner >= AXIS_WIDTH + 34 + LEGEND_WIDTH;
-  const plotWidth = Math.max(8, inner - AXIS_WIDTH - (showLegend ? LEGEND_WIDTH : 0) - 2);
+  const plotWidth = Math.max(8, inner - AXIS_WIDTH - 2);
   // Panel rows: value labels, the plot, run labels, an optional spacer, the
   // stats line. The plot gives up rows before the stats line does, because the
   // numbers matter more than the bar resolution.
@@ -507,9 +505,7 @@ function timingsPanel({ width, height, results }) {
 
   const max = niceMax(Math.max(...shown.map((run) => run.value)));
   const cellValue = max / plotHeight;
-  const baselineRow = baseline === null ? -1 : Math.min(plotHeight - 1, Math.max(0, Math.round(baseline / cellValue) - 1));
   const axisLabels = axisGridLabels({ max, cellValue, plotHeight });
-  const plotTail = Math.max(0, plotWidth - shown.length * slot);
 
   const body = [];
   body.push([
@@ -529,19 +525,9 @@ function timingsPanel({ width, height, results }) {
       let glyph = "";
       if (whole > row) glyph = BLOCK_FULL;
       else if (whole === row) glyph = BLOCKS[Math.round((filled - whole) * 8)] ?? "";
-      if (glyph === "") {
-        // No part of this bar reaches this row, so the baseline shows through.
-        cells.push(row === baselineRow ? seg(BOX.dash.repeat(slot), "accent") : seg(" ".repeat(slot)));
-      } else {
-        cells.push(seg(pad(glyph.repeat(barWidth), slot), run === best ? "barBest" : "bar"));
-      }
-    }
-    // Carry the dashed baseline across the empty part of the plot, so it reads
-    // as one reference line rather than a dash under each short bar.
-    cells.push(row === baselineRow ? seg(BOX.dash.repeat(plotTail), "accent") : seg(" ".repeat(plotTail)));
-    if (showLegend) {
-      cells.push(seg("  "));
-      cells.push(...legendRow(row, plotHeight, { best, baseline }));
+      cells.push(glyph === ""
+        ? seg(" ".repeat(slot))
+        : seg(pad(glyph.repeat(barWidth), slot), run === best ? "barBest" : "bar"));
     }
     body.push(cells);
   }
@@ -563,18 +549,6 @@ function timingsPanel({ width, height, results }) {
   ]);
 
   return panel({ width, height, title, titleRight: "Lower is better", body });
-}
-
-function legendRow(row, plotHeight, { best, baseline }) {
-  const fromTop = plotHeight - 1 - row;
-  if (fromTop === 0 && best) {
-    return [seg(`${STAR} BEST ${experimentId(best.index)}  `, "barBest"), seg(`${Math.round(best.value)} ms`, "value")];
-  }
-  if (fromTop === 1 && baseline !== null) {
-    return [seg(`${BOX.dash.repeat(2)} BASELINE ${experimentId(0)}  `, "accent"), seg(`${Math.round(baseline)} ms`, "muted")];
-  }
-  if (fromTop === 2) return [seg(`${BLOCK_FULL} OTHER RUNS`, "bar")];
-  return [];
 }
 
 // ---------------------------------------------------------------------------

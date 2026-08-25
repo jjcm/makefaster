@@ -157,8 +157,9 @@ no dependencies — raw ANSI, three panels, repainted from
   candidate is `results.final` once the last measurement pass has been written,
   and until then it is the state the kept iterations have walked the site to —
   so a keep moves the column the moment it is recorded.
-- **RUN TIMINGS** — one bar per run on the north-star metric, with a dashed
-  baseline, a star on the best run, and the rolling average. Every measured
+- **RUN TIMINGS** — one bar per run on the north-star metric, with a star on the
+  best run and a footer carrying the rolling average, the improvement against
+  baseline, and the run count. Every measured
   iteration is a bar, kept or reverted: a miss was profiled just as carefully,
   and only kept ones move the running value. An iteration can report either the
   absolute value the run landed on or the `deltaMs` it moved, and one that

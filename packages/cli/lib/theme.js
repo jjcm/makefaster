@@ -52,7 +52,6 @@ export const BOX = {
   tl: "┌", tr: "┐", bl: "└", br: "┘",
   h: "─", v: "│",
   lt: "├", rt: "┤",
-  dash: "╌",
 };
 
 /** Bottom-anchored eighths, for bar tops that fall between rows. */
