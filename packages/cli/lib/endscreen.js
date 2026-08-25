@@ -233,12 +233,15 @@ async function askTraceSubmission({ results, state, paths, io, resultsSubmitted 
   }
 
   const chars = payload.thinking.reduce((sum, block) => sum + block.text.length, 0);
+  const size = chars < 1000 ? `${chars} characters` : `${Math.round(chars / 100) / 10}k characters`;
   const iterations = payload.results?.iterations?.length ?? 0;
   io.log(`  ${bold("4. Submit this session's chain of thought?")} ${dim("(separate question, off by default)")}`);
-  io.log(dim(`     ${payload.thinking.length} thinking block${payload.thinking.length === 1 ? "" : "s"} ` +
-    `(${Math.round(chars / 100) / 10}k characters) of ${state.modelLabel || state.model || "the agent"}'s own`));
-  io.log(dim(`     reasoning, in order${iterations > 0 ? `, plus the ${iterations}-iteration keep/revert list` : ""}. Text only:`));
-  io.log(dim("     no tool calls, no command output, no file contents, no diff."));
+  io.log(dim(`     ${payload.thinking.length} thinking block${payload.thinking.length === 1 ? "" : "s"} (${size}) of ` +
+    `${state.modelLabel || state.model || "the agent"}'s own reasoning, in order` +
+    `${iterations > 0 ? `,` : "."}`));
+  io.log(dim(`     ${iterations > 0 ? `plus the ${iterations}-iteration keep/revert list. ` : ""}` +
+    "Text only: no tool calls, no command"));
+  io.log(dim("     output, no file contents, no diff."));
   io.log(dim("     Kept privately on the makefaster server to post-train a small model on how"));
   io.log(dim("     the loop reasons. Never shown on the boards, never served by any endpoint,"));
   io.log(dim("     and never fed to another run's checklist."));

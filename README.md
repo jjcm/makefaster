@@ -68,7 +68,7 @@ What happens:
    makefaster shows [its own dashboard](#the-dashboard) instead.
 7. **Stops when the whole checklist has been walked and the extras are done** —
    not at five runs, and not because several attempts in a row missed — then
-   leaves the dashboard and shows the end screen with three
+   leaves the dashboard and shows the end screen with its
    questions:
    - **Loop more?** — another round: whatever is left of the checklist first,
      then more extras.
@@ -78,6 +78,11 @@ What happens:
    - **Submit anonymous improvements data?** — no URL; category names,
      descriptions, and deltas only. Novel improvements become new categories
      on the improvement leaderboard.
+   - **Submit this session's chain of thought?** — a separate decision, asked
+     once the two above have been answered and defaulting to no. The agent's own
+     reasoning text, kept privately to post-train a small model on how the loop
+     reasons; never published anywhere. See
+     [Chains of thought](#chains-of-thought).
 
 ```text
 Usage: npx makefaster [dir] [options]
@@ -393,7 +398,11 @@ start empty and grow as loops report results:
 | `GET /api/health` | `{ ok, embedder, threshold }` | — |
 | `POST /api/submit-site` | `{ url, favicon?, name?, prUrl?, genericKeepPct?, siteSpecificKeepPct?, tips?, lcpBefore?, lcpRaw, lcpDelta, ttiBefore?, ttiRaw, ttiDelta, mode: cold\|warm }` — upserts the site's row; URL + favicon shown publicly, `name` reduced to the product's own name, `prUrl` (or `pr`) linked from it. `tips` is up to 10 `{ text, about? }` notes to the catalog maintainers (280/80 chars, clamped): stored privately, acknowledged only as a count, never served by any endpoint | `MakefasterAPI.submitSite(payload)` |
 | `POST /api/submit-improvements` | `{ improvements: [{ name, description?, deltaMs?, deltaPct? }] }` — anonymous; names and descriptions are normalized to generic techniques and embedding-matched into categories | `MakefasterAPI.submitImprovements(payload)` |
+| `POST /api/submit-trace` | `{ thinking: [{ text }], results?, runId?, product?, prUrl?, agent?, model?, round?, startedAt?, submittedAt?, resultsSubmitted? }` — one run's chain of thought. Stored privately (see [Chains of thought](#chains-of-thought)); there is no GET counterpart and nothing it holds appears on a board or in `/data/*.json` | — |
 | `POST /api/openrouter/v1/chat/completions` | OpenAI-compatible chat completions for the CLI's hosted provider, proxied to OpenRouter under the server's own credential | — |
+
+Unknown paths under `/api/` answer `404` rather than the SPA shell, so a route
+nobody wrote cannot become one the static fallback answers.
 
 Each metric has both ends of the run: `lcpRaw`/`ttiRaw` are the measurement
 after the last kept change, `lcpBefore`/`ttiBefore` the pre-loop baseline, and
@@ -459,6 +468,119 @@ deliberately narrow ([`backend/internal/inference`](backend/internal/inference))
 
 Set the key at deploy time; there is none in this repo, and the tests use an
 `httptest` upstream and a placeholder string.
+
+### Chains of thought
+
+`POST /api/submit-trace` collects the one thing the loop produces that neither
+board can hold: **how the agent reasoned**. A curated set of those traces is
+what a small model can be post-trained on — the checklist walk, the hypothesis
+that did not survive the measurement, the skip and the reason for it.
+
+It is a **separate question in the CLI**, asked after the results question has
+been answered and defaulting to no:
+
+```text
+  2. Submit stats to the Site leaderboard?          [y/N]
+  3. Submit anonymous improvements data?            [y/N]
+
+  4. Submit this session's chain of thought?        [y/N]   ← its own decision
+```
+
+The two are not bundled. Uploading results and declining the trace is a normal
+answer, declining the results and sending the trace is a normal answer, and
+both and neither are too — the trace records which happened
+(`resultsSubmitted`), because a training set should know whether the run it is
+reading also went on a board. Nothing is ever auto-uploaded: the prompt defaults
+to no and takes an explicit yes.
+
+**What the CLI sends.** The reasoning text and nothing else. The four providers
+all stream reasoning, and makefaster otherwise collapses every bit of it into
+the word `thinking` on the way to the progress line, so
+[`packages/cli/lib/thinkingTrace.js`](packages/cli/lib/thinkingTrace.js) reads
+the field each one documents as reasoning — an ACP `agent_thought_chunk`, a
+Claude `thinking` block, a Codex `reasoning` item, an OpenRouter `reasoning`
+field — and appends it to `.makefaster/thinking-trace.jsonl`. Streamed chunks
+coalesce into blocks; the first event that is not a thought closes one. Nothing
+reads the file during the run, it is ignored by git along with the rest of
+`.makefaster/`, and it can be read before answering — the prompt names it.
+
+`.makefaster/thinking.log` is **not** this file and has not changed: it is the
+agent's own one-line-per-step report, it is the only thing the dashboard shows,
+and it stays user-facing.
+
+The payload also carries the distilled `results.json` — the iteration list with
+its keep/revert verdicts, plus both ends of the run — and the metadata that
+lines a trace up with the run that produced it: product name, `prUrl`, agent and
+model, round, timestamps. It carries no diff: the loop's changes are in the pull
+request the site row already links to, and shipping a user's source under a
+question about reasoning would be answering a question they were not asked.
+
+**Where it goes.** One JSON document per run under `MAKEFASTER_TRACE_DIR`
+(`/var/lib/makefaster/traces` by default), as
+`<yyyy-mm>/<run id>.json`, in a `0700` directory as a `0600` file — outside the
+repo and outside `FRONTEND_DIR`, because the one thing that must never happen to
+a trace is being served as a static asset. The `traces` table is the index
+beside it (counts and metadata, not content) so a year of collection is still
+queryable. A run that submits twice replaces its own document rather than adding
+a second copy.
+
+Nothing serves any of it. There is no `GET`, no board, no `/data/*.json` field,
+and it is not where the CLI's imported checklist comes from — that is
+`GET /data/improvements.json` and only that. Setting `MAKEFASTER_TRACE_DIR=off`
+collects nothing, and a deployment with no directory answers `503` naming the
+setting.
+
+**What cannot get in.** Everything stored is whitelisted rather than filtered:
+`thinking` is read for text, and `results` is re-read field by field, so an
+iteration's `notes` — where the skill puts everything specific to one repo —
+stays on the submitter's disk. A payload that carries a tool transcript, a build
+log or a `tool_result` block (`messages`, `toolResults`, `stdout`, a block whose
+`type` names a tool…) is **refused with the reason** rather than quietly
+stripped: a trace that silently is not what it claims would be worse than no
+trace. And the caps mean a `yarn build` log cannot arrive as reasoning either —
+400 blocks, 8k characters each, 200k in total, 200 iterations, a 96 KB diff,
+behind a 512 KB body wall. Whatever had to be clamped comes back in the
+response.
+
+#### Backfilling already-packed runs
+
+Speed Lab has runs on disk already, and those do not need to go through the TUI
+to get onto the box. `makefaster-traces` imports them directly:
+
+```bash
+cd backend && go build -o /usr/local/bin/makefaster-traces ./cmd/traces
+
+makefaster-traces import --dir /srv/backfill/2026-08     # a directory of runs
+makefaster-traces import --tar /srv/backfill/runs.tar.gz # or a tar/tar.gz
+makefaster-traces import --dir ./runs --dry-run          # validate, write nothing
+makefaster-traces list --limit 20                        # the private index
+```
+
+One directory per run, in the layout an export already writes:
+
+```text
+<run>/
+  meta.json        required — { runId?, product?, prUrl?, agent?, model?,
+                               round?, startedAt?, submittedAt?,
+                               resultsSubmitted? }
+  thinking.jsonl   required — one {"text": "…"} per line, in order
+                              (a bare JSON string per line also reads)
+  results.json     optional — the run's results.json
+  diff.patch       optional — the unified patch, truncated to the size cap
+```
+
+A `--tar` is a tar of the same tree; the first path segment of each entry is the
+run, so both `tar -cf runs.tar run-*/` and a tar with a wrapping directory
+import the same way. A run with no `runId` in its `meta.json` is named after its
+directory, so re-importing the same export is one trace rather than two, and a
+run already stored is skipped unless `--replace` — an interrupted backfill is
+safe to run again.
+
+Imports go through the same `internal/trace` value the endpoint produces, so an
+imported trace and a submitted one are indistinguishable once stored: same
+whitelisting, same caps, same refusal to accept tool output in place of
+thinking. `list` reads the index on the box; it is deliberately not an HTTP
+endpoint and deliberately not something the CLI can reach.
 
 ### Embeddings
 
@@ -552,7 +674,10 @@ cd backend && go build -o /usr/local/bin/makefaster-server ./cmd/server
 
 Migrations run on start, so a deploy is build, replace, restart. The process
 needs `MARIADB_DSN`, `FRONTEND_DIR`, and `MIGRATIONS_DIR` pointing at the
-shipped copies of `frontend/` and `backend/internal/db/migrations/`. Put a
+shipped copies of `frontend/` and `backend/internal/db/migrations/`. If it is to
+collect [chains of thought](#chains-of-thought) it also needs write access to
+`MAKEFASTER_TRACE_DIR` — somewhere private, outside `FRONTEND_DIR`, and it is
+not backed up by anything that publishes. Put a
 TLS-terminating proxy (Caddy/nginx/Cloudflare) in front and point the domain at
 it — the `npx makefaster` CLI submits to `https://makefaster.dev` by default,
 and elsewhere with `--api` or `MAKEFASTER_API_BASE`.
@@ -569,14 +694,24 @@ server too so the boards stay live.
 
 ```bash
 npm test                                    # CLI: detection, args, payloads,
-                                            # protocol children, catalog, dashboard
-cd backend && go test ./...                 # server, embedder, categorization
+                                            # protocol children, catalog, dashboard,
+                                            # the end screen's questions
+cd backend && go test ./...                 # server, embedder, categorization, traces
 ```
 
 The CLI suite spawns real protocol children — a stub agent speaking ACP and one
 speaking the codex app-server dialect — and asserts on the frames they receive,
 so the argv, the handshake, and the permission answers are proven rather than
 described. It needs no network, no database, and no signed-in agent CLI.
+
+The end screen's questions are a test rather than a promise: that the chain of
+thought is asked **after** the results question and not bundled with it, that
+its prompt defaults to no, that declining it posts nothing at all, that
+declining the results and accepting it still submits, and that the payload is
+thinking text plus the iteration list with no `notes` and nothing resembling a
+tool transcript. The trace capture is tested per provider stream — a reasoning
+chunk is captured, a tool call and plain assistant prose are not — along with
+the coalescing and the caps.
 
 
 The MariaDB-backed server tests skip unless a throwaway schema is named, so
@@ -597,6 +732,18 @@ static/SPA fallback and legacy redirects; CORS; and the body cap. They also run
 the two board migrations against the live rows they were written for: the
 generic-name rename (00002) and the generic-description backfill (00004), the
 latter both forwards and rolled back.
+
+The trace tests are the other half of the privacy claim. Both public documents
+are captured byte for byte before a trace is submitted and compared after, so a
+trace cannot change what the boards serve even in a field nobody thought to look
+at; the reasoning is then searched for by hand in both. The rest covers what has
+no route (`GET /api/submit-trace`, `/api/traces`, the document path — all `404`,
+none of them the SPA shell), the refusals (five shapes of tool transcript, each
+answered `400` with nothing written), the caps and the `413`, that a
+resubmission replaces rather than duplicates, that documents land `0600` in a
+`0700` directory, that a client-supplied run id cannot escape it
+(`../../etc/passwd`), and that the backfill importer reads both a directory and
+a tar — refusing tool output there too.
 
 The categorization and embedding tests need a realistic board to match against,
 so they read `backend/testdata/categories.json` — a frozen 50-row fixture that
