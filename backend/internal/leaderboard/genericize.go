@@ -217,19 +217,22 @@ var deferBuckets = []canonicalRule{
 	{canonical: "Lazy-Load Components"},
 }
 
-// canonicalRules is the ordered generic-technique table. Order matters:
-// "Prefer Brotli Over Gzip" is brotli, and "Gzip Precompress Static Assets"
-// is precompression.
+// canonicalRules is the ordered generic-technique table.
+//
+// The whole compression family — precompressed siblings, runtime gzip, runtime
+// brotli — is one bucket. "Precompress Static Assets", "Enable Gzip
+// Compression" and "Enable Brotli Compression" spent months as three live rows
+// splitting one technique's count three ways, and every walk of the checklist
+// spent three iterations proving the same thing. Migration 00008 folded the
+// three rows into one; this rule is what keeps the next submission from
+// re-creating the split.
 var canonicalRules = []canonicalRule{
 	{canonical: "Precompress Static Assets", require: [][]string{{
 		"precompress", "precompressed", "precompression", "pre compress",
 		"pre compressed", "gz sibling", "gz siblings", "br sibling",
 		"br siblings", "static compression",
-	}}},
-	{canonical: "Enable Brotli Compression", require: [][]string{{"brotli", "br compression"}}},
-	{canonical: "Enable Gzip Compression", require: [][]string{{
-		"gzip", "gzipped", "gzipping", "text compression", "response compression",
-		"zlib", "deflate",
+		"gzip", "gzipped", "gzipping", "brotli", "br compression",
+		"text compression", "response compression", "zlib", "deflate",
 	}}},
 	{canonical: "ETag Conditional Responses", require: [][]string{{
 		"etag", "etags", "if none match", "conditional request",
@@ -274,6 +277,20 @@ var canonicalRules = []canonicalRule{
 	{canonical: "Compress SVG Assets", require: [][]string{
 		{"svg", "svgs"},
 		{"minify", "minified", "compress", "compressed", "optimize", "optimise", "optimized", "path", "paths", "precision"},
+	}},
+	// After the SVG rule, so "Minify Boot-shell SVG Paths" stays an SVG fold.
+	// The exclude keeps a multi-surface "minify JS and CSS" submission from
+	// being renamed onto the JS-only row.
+	{canonical: "Minify JavaScript",
+		require: [][]string{
+			{"minify", "minified", "minification", "unminified", "uglify", "terser"},
+			{"js", "javascript"},
+		},
+		exclude: []string{"css", "html", "svg"},
+	},
+	{canonical: "Remove Unused CSS", require: [][]string{
+		{"unused", "dead"},
+		{"css", "stylesheet", "stylesheets"},
 	}},
 	{canonical: "Inline Critical HTML Shell", require: [][]string{{
 		"boot shell", "html shell", "static shell", "shell html", "prerender",

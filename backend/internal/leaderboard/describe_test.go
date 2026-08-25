@@ -55,12 +55,20 @@ func TestLiveBoardDescriptionsAreRewrittenAsTechniques(t *testing.T) {
 // Migration 00004 and the catalog in describe.go have to say the same thing:
 // the migration backfills the rows that predate the rule, ingest describes
 // everything after it, and a row rewritten by one then folded by the other must
-// not flip wording.
+// not flip wording. The one exception is deliberate: migration 00008 folded the
+// compression triplet onto Precompress Static Assets and re-described it, so
+// for that row the catalog now writes the folded blurb, not 00004's.
 func TestBackfilledDescriptionsMatchTheCatalogBlurb(t *testing.T) {
+	supersededBy00008 := map[string]struct{}{
+		"Precompress Static Assets": {},
+	}
 	matched := 0
 	for _, row := range fixtureDescriptions(t) {
 		blurb := leaderboard.CatalogDescription(row.Name)
 		if blurb == "" {
+			continue
+		}
+		if _, superseded := supersededBy00008[row.Name]; superseded {
 			continue
 		}
 		matched++
@@ -77,8 +85,8 @@ func TestBackfilledDescriptionsMatchTheCatalogBlurb(t *testing.T) {
 func TestCatalogBlurbsAreGenericAndFitTheColumn(t *testing.T) {
 	for _, name := range []string{
 		"Lazy-Load Components", "Lazy-Load Unseen Images", "Lazy-Load Third-Party SDKs",
-		"Defer Analytics Loading", "Defer Unused Data Fetches", "Enable Gzip Compression",
-		"Enable Brotli Compression", "Precompress Static Assets",
+		"Defer Analytics Loading", "Defer Unused Data Fetches",
+		"Precompress Static Assets", "Minify JavaScript", "Remove Unused CSS",
 		"Content-Hashed Immutable Assets", "ETag Conditional Responses",
 		"Reduce Font Payload", "Self-Host Critical Fonts", "Cut Critical-Path JavaScript",
 		"Subset Syntax-Highlighter Bundle", "Skip Redundant Fetches",

@@ -17,9 +17,9 @@ func TestGenericCategoryNameRewritesSiteSpecificNames(t *testing.T) {
 
 		"Gzip-precompressed static assets":                      "Precompress Static Assets",
 		"Gzip Precompress Frontend Static Assets":               "Precompress Static Assets",
-		"Enable Gzip Text Compression on the Production Server": "Enable Gzip Compression",
-		"Gzip Dynamic API JSON Responses by Default":            "Enable Gzip Compression",
-		"Prefer Brotli Over Gzip":                               "Enable Brotli Compression",
+		"Enable Gzip Text Compression on the Production Server": "Precompress Static Assets",
+		"Gzip Dynamic API JSON Responses by Default":            "Precompress Static Assets",
+		"Prefer Brotli Over Gzip":                               "Precompress Static Assets",
 		"ETag Conditional Responses for the Component Registry": "ETag Conditional Responses",
 		"Import highlight.js/lib/common":                        "Subset Syntax-Highlighter Bundle",
 		"Highlight.js Common Subset":                            "Subset Syntax-Highlighter Bundle",
@@ -33,6 +33,51 @@ func TestGenericCategoryNameRewritesSiteSpecificNames(t *testing.T) {
 		"Minify Boot-shell SVG Paths":                           "Compress SVG Assets",
 		"Static Welcome-screen Boot Shell":                      "Inline Critical HTML Shell",
 		"Evict Remaining Non-boot JS From the Entry Bundle":     "Cut Critical-Path JavaScript",
+	}
+	for input, expected := range cases {
+		if got := leaderboard.GenericCategoryName(input); got != expected {
+			t.Errorf("GenericCategoryName(%q) = %q, want %q", input, got, expected)
+		}
+	}
+}
+
+// One idea, one row: build-time compressed siblings and runtime gzip/brotli
+// are the same technique — serve the bytes compressed — so the whole family
+// lands on Precompress Static Assets. This is the ingest half of the fold
+// migration 00008 applied to the live board.
+func TestCompressionFamilyFoldsIntoPrecompress(t *testing.T) {
+	for _, name := range []string{
+		"Enable Gzip Compression",
+		"Enable Brotli Compression",
+		"Gzip / Brotli Compression",
+		"Precompress Static Assets",
+		"Enable text compression at the origin",
+		"Serve brotli-encoded responses",
+		"Gzip the API JSON responses",
+		"Generate gz siblings at build time",
+	} {
+		if got := leaderboard.GenericCategoryName(name); got != "Precompress Static Assets" {
+			t.Errorf("GenericCategoryName(%q) = %q, want %q", name, got, "Precompress Static Assets")
+		}
+	}
+}
+
+// The two techniques the live board named but described as one repo's
+// changelog. The names are canonical now, so submissions land on them however
+// they are worded — without smashing them into each other or into the
+// critical-path row, which are different techniques.
+func TestMinifyAndUnusedCSSNamesAreCanonical(t *testing.T) {
+	cases := map[string]string{
+		"Minify vendored JS libraries at build time": "Minify JavaScript",
+		"Minification of unminified JavaScript":      "Minify JavaScript",
+		"Remove Unused CSS":                          "Remove Unused CSS",
+		"Strip dead CSS from the entry stylesheet":   "Remove Unused CSS",
+		"Drop unused stylesheet payload":             "Remove Unused CSS",
+
+		// Neighbours that must stay distinct.
+		"Minify Boot-shell SVG Paths":                       "Compress SVG Assets",
+		"Evict Remaining Non-boot JS From the Entry Bundle": "Cut Critical-Path JavaScript",
+		"Remove Duplicate CSS Bundles":                      "Remove Duplicate CSS Bundles",
 	}
 	for input, expected := range cases {
 		if got := leaderboard.GenericCategoryName(input); got != expected {
