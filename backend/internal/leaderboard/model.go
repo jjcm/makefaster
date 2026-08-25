@@ -72,6 +72,10 @@ type Category struct {
 // one and the value recovered from the delta when it did not. PRURL is empty
 // unless the submitter linked the pull request the run produced, and the two
 // keep percentages are zero unless the submitter reported the split.
+//
+// Tips are the run's private notes to the catalog maintainers (see Tip). They
+// are stored and never served: not on either board, not in GET /data/*.json,
+// and never in the checklist the CLI imports.
 type SiteSubmission struct {
 	URL                 string
 	Mode                string
@@ -86,6 +90,18 @@ type SiteSubmission struct {
 	PRURL               string
 	GenericKeepPct      int
 	SiteSpecificKeepPct int
+	Tips                []Tip
+}
+
+// Tip is one note a run leaves for the Speed Lab about the catalog itself —
+// "these two rows are one technique", "skip the JS rows when the SPA is
+// prebuilt". About optionally names the category (or "catalog") the note is
+// about. Tips are write-only through the public API: they inform how the
+// catalog is refined (the way the compression triplet was folded), and they
+// are never displayed anywhere or fed back to another agent.
+type Tip struct {
+	Text  string
+	About string
 }
 
 // Improvement is one validated entry of POST /api/submit-improvements. The

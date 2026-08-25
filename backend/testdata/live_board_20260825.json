@@ -1,0 +1,254 @@
+[
+ {
+  "rank": 1,
+  "name": "Lazy-Load Components",
+  "description": "Import optional UI (editors, diagrams, modals, viewers) only from the surfaces that need them so they stay off the first-load bundle.",
+  "count": 27,
+  "avgImprovementMs": -1119,
+  "avgImprovementPct": -15.6,
+  "icon": "default"
+ },
+ {
+  "rank": 2,
+  "name": "Precompress Static Assets",
+  "description": "Pre-generate gzip/brotli siblings for static text assets and serve them to clients that accept those encodings.",
+  "count": 16,
+  "avgImprovementMs": -4257,
+  "avgImprovementPct": -35.8,
+  "icon": "default"
+ },
+ {
+  "rank": 3,
+  "name": "Cut Critical-Path JavaScript",
+  "description": "Move non-boot code (editors, layout engines, unused languages) off the entry bundle so less JS runs before LCP.",
+  "count": 12,
+  "avgImprovementMs": -652,
+  "avgImprovementPct": -15.1,
+  "icon": "default"
+ },
+ {
+  "rank": 4,
+  "name": "Reduce Font Payload",
+  "description": "Ship only the font files, weights, and subsets the entry page actually paints, and drop preloads for fonts it never uses.",
+  "count": 11,
+  "avgImprovementMs": -2722,
+  "avgImprovementPct": -15,
+  "icon": "default"
+ },
+ {
+  "rank": 5,
+  "name": "Inline Critical HTML Shell",
+  "description": "Paint the LCP heading/logo from static HTML+CSS instead of waiting for the app bundle to mount it.",
+  "count": 9,
+  "avgImprovementMs": -1529,
+  "avgImprovementPct": -47.6,
+  "icon": "default"
+ },
+ {
+  "rank": 6,
+  "name": "Content-Hashed Immutable Assets",
+  "description": "Serve content-hashed static files with long-lived immutable cache headers so repeat visits skip the transfer.",
+  "count": 7,
+  "avgImprovementMs": -865,
+  "avgImprovementPct": -32.1,
+  "icon": "default"
+ },
+ {
+  "rank": 7,
+  "name": "Enable Gzip Compression",
+  "description": "Compress text responses (HTML, JS, CSS, JSON) with gzip so first-load transfer is smaller.",
+  "count": 5,
+  "avgImprovementMs": -2443,
+  "avgImprovementPct": -29,
+  "icon": "default"
+ },
+ {
+  "rank": 8,
+  "name": "Inline Shared Stylesheets",
+  "description": "Inline the shared render-blocking stylesheet so first paint does not wait on a CSS round trip.",
+  "count": 4,
+  "avgImprovementMs": -286,
+  "avgImprovementPct": -27.2,
+  "icon": "default"
+ },
+ {
+  "rank": 9,
+  "name": "Bundle the Default Route with the Entry",
+  "description": "Import the route users always land on statically so boot does not wait on a late-discovered route chunk",
+  "count": 3,
+  "avgImprovementMs": -276,
+  "avgImprovementPct": -25.1,
+  "icon": "default"
+ },
+ {
+  "rank": 10,
+  "name": "Enable Brotli Compression",
+  "description": "Prefer brotli for text responses when the client accepts it, falling back to gzip.",
+  "count": 3,
+  "avgImprovementMs": -747,
+  "avgImprovementPct": -17.2,
+  "icon": "default"
+ },
+ {
+  "rank": 11,
+  "name": "Optimize Hydration Strategy",
+  "description": "Hydrate non-critical islands on idle or interaction instead of blocking first paint with eager client hydration.",
+  "count": 3,
+  "avgImprovementMs": -182,
+  "avgImprovementPct": -14.4,
+  "icon": "default"
+ },
+ {
+  "rank": 12,
+  "name": "Merge Small JS Chunks",
+  "description": "Combine tiny boot-time JS chunks so HTTP/1.1 request count and round trips stop dominating LCP.",
+  "count": 3,
+  "avgImprovementMs": -550,
+  "avgImprovementPct": -11.2,
+  "icon": "default"
+ },
+ {
+  "rank": 13,
+  "name": "Defer Analytics Loading",
+  "description": "posthog-js was statically imported by the shared telemetry wrapper, shipping ~50KB gzip of analytics SDK in the critical path of every page even when telemetry ",
+  "count": 3,
+  "avgImprovementMs": -514,
+  "avgImprovementPct": -3.4,
+  "icon": "default"
+ },
+ {
+  "rank": 14,
+  "name": "Short Freshness Window for HTML",
+  "description": "Serve the HTML document with a short max-age so repeat visits skip the revalidation round trip while still picking up changes quickly.",
+  "count": 2,
+  "avgImprovementMs": -358,
+  "avgImprovementPct": -55.7,
+  "icon": "default"
+ },
+ {
+  "rank": 15,
+  "name": "Remove Duplicate CSS Bundles",
+  "description": "Do not ship two overlapping CSS bundles as render-blocking; emit one shared stylesheet.",
+  "count": 2,
+  "avgImprovementMs": -980,
+  "avgImprovementPct": -30.7,
+  "icon": "default"
+ },
+ {
+  "rank": 16,
+  "name": "Skip Redundant Fetches",
+  "description": "Do not download the same payload twice during boot; reuse the in-flight or cached response.",
+  "count": 2,
+  "avgImprovementMs": -868,
+  "avgImprovementPct": -18.8,
+  "icon": "default"
+ },
+ {
+  "rank": 17,
+  "name": "Self-Host Critical Fonts",
+  "description": "Host LCP fonts on the same origin so the heading does not wait on extra DNS/TLS to a font CDN.",
+  "count": 2,
+  "avgImprovementMs": -304,
+  "avgImprovementPct": -16.5,
+  "icon": "default"
+ },
+ {
+  "rank": 18,
+  "name": "Compress SVG Assets",
+  "description": "Minify inline and static SVGs so the document and images cost fewer bytes on the critical path.",
+  "count": 2,
+  "avgImprovementMs": -115,
+  "avgImprovementPct": -6.4,
+  "icon": "default"
+ },
+ {
+  "rank": 19,
+  "name": "Inline the LCP Image as a Data URI",
+  "description": "When the largest contentful paint is a small static image, quantize it and inline it as a data URI so the paint needs no extra request.",
+  "count": 1,
+  "avgImprovementMs": -1300,
+  "avgImprovementPct": -62.8,
+  "icon": "default"
+ },
+ {
+  "rank": 20,
+  "name": "ETag Conditional Responses",
+  "description": "Send ETags on large JSON/API payloads and honor If-None-Match with 304 so warm loads skip the body.",
+  "count": 1,
+  "avgImprovementMs": -810,
+  "avgImprovementPct": -59.1,
+  "icon": "default"
+ },
+ {
+  "rank": 21,
+  "name": "Lazy-Load Unseen Images",
+  "description": "Do not eagerly download images that are hidden, below the fold, or unused on the current viewport.",
+  "count": 1,
+  "avgImprovementMs": -1500,
+  "avgImprovementPct": -47.3,
+  "icon": "default"
+ },
+ {
+  "rank": 22,
+  "name": "Remove Entrance Animation From LCP Element",
+  "description": "Do not fade or slide the LCP element in; paint it at full opacity so the largest paint lands as soon as it renders.",
+  "count": 1,
+  "avgImprovementMs": -337,
+  "avgImprovementPct": -34.3,
+  "icon": "default"
+ },
+ {
+  "rank": 23,
+  "name": "Minify JavaScript",
+  "description": "Minified vendored JS libraries (AngularJS, jQuery, moment, fancytree, bootstrap, daterangepicker) at asset-embed time in the Go build script using tdewolff/mini",
+  "count": 1,
+  "avgImprovementMs": -2008,
+  "avgImprovementPct": -23.7,
+  "icon": "default"
+ },
+ {
+  "rank": 24,
+  "name": "Skip Authenticated Route Modules for Signed-out Visitors",
+  "description": "Do not download route modules the visitor cannot render",
+  "count": 1,
+  "avgImprovementMs": -324,
+  "avgImprovementPct": -20.8,
+  "icon": "default"
+ },
+ {
+  "rank": 25,
+  "name": "WebSocket-first Realtime Transport",
+  "description": "Open the realtime connection on WebSocket first (with polling fallback) instead of a long-poll handshake before first data.",
+  "count": 1,
+  "avgImprovementMs": -476,
+  "avgImprovementPct": -14.6,
+  "icon": "default"
+ },
+ {
+  "rank": 26,
+  "name": "Subset Syntax-Highlighter Bundle",
+  "description": "Import only the languages the product actually highlights instead of the full highlighter with every grammar.",
+  "count": 1,
+  "avgImprovementMs": -192,
+  "avgImprovementPct": -5.5,
+  "icon": "default"
+ },
+ {
+  "rank": 27,
+  "name": "Remove Unused CSS",
+  "description": "The app shipped a tooltip provider wrapper and ~13 KB of tooltip utility CSS (now inlined into every SSR response) although no tooltip ever renders. Removed the",
+  "count": 1,
+  "avgImprovementMs": -31,
+  "avgImprovementPct": -4.5,
+  "icon": "default"
+ },
+ {
+  "rank": 28,
+  "name": "Inline Boot-critical API Data Into the Document",
+  "description": "Embed the small public payloads the app must have before first render directly in the served document so the client skips those blocking round trips.",
+  "count": 1,
+  "avgImprovementMs": -39,
+  "avgImprovementPct": -3.6,
+  "icon": "default"
+ }
+]

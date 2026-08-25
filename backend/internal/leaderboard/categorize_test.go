@@ -322,6 +322,41 @@ func TestAnExistingGenericNameWinsOverARuleSynonym(t *testing.T) {
 	}
 }
 
+// After migration 00008 the board holds one compression row. A submission
+// still worded the old way — gzip, brotli, or the bundled catalog's pair —
+// must fold into it rather than re-creating the rank the migration removed.
+func TestCompressionSubmissionsFoldIntoThePrecompressRow(t *testing.T) {
+	embedder, threshold := localEmbedder()
+	board := []leaderboard.Category{{
+		Rank: 1, Name: "Precompress Static Assets",
+		Description: leaderboard.CatalogDescription("Precompress Static Assets"),
+		Count:       24, AvgImprovementMs: -3440, AvgImprovementPct: -32.1, Icon: "default",
+	}}
+
+	submitted := []leaderboard.Improvement{
+		{Name: "Enable Gzip Compression", Description: "Compress text responses with gzip", DeltaPct: -12, HasDeltaPct: true},
+		{Name: "Enable Brotli Compression", Description: "Prefer brotli when the client accepts it", DeltaPct: -8, HasDeltaPct: true},
+		{Name: "Gzip / Brotli Compression", Description: "Turned on text compression at the origin", DeltaPct: -15, HasDeltaPct: true},
+	}
+	updated, results := leaderboard.Categorize(submitted, board, embedder, threshold)
+
+	for i, result := range results {
+		if result.Action != "matched" || result.Category != "Precompress Static Assets" {
+			t.Errorf("results[%d] (%q) landed on %q (%s), want a fold into Precompress Static Assets",
+				i, result.Input, result.Category, result.Action)
+		}
+	}
+	if len(updated) != 1 {
+		t.Fatalf("compression submissions re-split the row: %d categories", len(updated))
+	}
+	if updated[0].Count != 27 {
+		t.Errorf("count: got %d, want 27", updated[0].Count)
+	}
+	if updated[0].Description != leaderboard.CatalogDescription("Precompress Static Assets") {
+		t.Errorf("the fold clobbered the generic description: %q", updated[0].Description)
+	}
+}
+
 func TestTitleCaseCategoryName(t *testing.T) {
 	cases := map[string]string{
 		"inline critical css":           "Inline Critical CSS",

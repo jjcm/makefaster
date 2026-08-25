@@ -143,6 +143,38 @@ func (s *Store) UpsertSite(ctx context.Context, submission leaderboard.SiteSubmi
 	return row, created, nil
 }
 
+// SaveTips records the notes a run left for the catalog maintainers. Tips are
+// write-only through the public API: nothing in this package serves them, no
+// endpoint reads them, and neither seed file can contain them. They are read
+// straight from the table by the people refining the catalog.
+func (s *Store) SaveTips(ctx context.Context, url string, tips []leaderboard.Tip, now time.Time) error {
+	if len(tips) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tips: %w", err)
+	}
+	defer tx.Rollback()
+
+	statement, err := tx.PrepareContext(ctx, `
+		INSERT INTO tips (url, about, text, created_at) VALUES (?, ?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("prepare tips: %w", err)
+	}
+	defer statement.Close()
+
+	for _, tip := range tips {
+		if _, err := statement.ExecContext(ctx, url, tip.About, tip.Text, now.UTC()); err != nil {
+			return fmt.Errorf("insert tip: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tips: %w", err)
+	}
+	return nil
+}
+
 // ReplaceCategories swaps the whole improvement leaderboard for a freshly
 // reranked one. Categorization rewrites every rank, so replacing the table in
 // one transaction is both simpler and more faithful than diffing rows; the

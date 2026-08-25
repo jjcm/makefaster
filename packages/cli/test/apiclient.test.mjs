@@ -125,6 +125,50 @@ test("buildSitePayloads reports how many keeps were reusable techniques", () => 
   assert.equal("siteSpecificKeepPct" in bare, false);
 });
 
+test("buildSitePayloads sends private tips once, clamped, and only when present", () => {
+  const withTips = {
+    ...RESULTS,
+    tips: [
+      { text: "  Enable Gzip duplicates Precompress Static Assets  ", about: "  catalog  " },
+      { text: "Skip SPA-internal rows when the bundle is prebuilt" },
+      { text: "" },
+      "not an object",
+      { about: "no text" },
+    ],
+  };
+  const payloads = buildSitePayloads(withTips, "example.com");
+  // Tips ride on the first payload only, so a cold+warm run stores each note once.
+  assert.deepEqual(payloads[0].tips, [
+    { text: "Enable Gzip duplicates Precompress Static Assets", about: "catalog" },
+    { text: "Skip SPA-internal rows when the bundle is prebuilt" },
+  ]);
+  assert.equal("tips" in payloads[1], false);
+
+  // Caps mirror the server's: 10 tips, 280 characters of text, 80 of about.
+  const many = {
+    ...RESULTS,
+    tips: Array.from({ length: 15 }, (_, i) => ({ text: `tip ${i} ${"x".repeat(400)}`, about: "y".repeat(200) })),
+  };
+  const capped = buildSitePayloads(many, "example.com")[0].tips;
+  assert.equal(capped.length, 10);
+  assert.ok(capped.every((tip) => tip.text.length <= 280 && tip.about.length <= 80));
+
+  // A results.json without tips (every session before the field existed)
+  // submits no tips key at all, and a malformed field is ignored.
+  assert.equal("tips" in buildSitePayloads(RESULTS, "example.com")[0], false);
+  assert.equal("tips" in buildSitePayloads({ ...RESULTS, tips: "not an array" }, "example.com")[0], false);
+});
+
+test("tips never reach the anonymous improvements payload", () => {
+  const withTips = {
+    ...RESULTS,
+    tips: [{ text: "Enable Gzip duplicates Precompress Static Assets", about: "catalog" }],
+  };
+  const payload = buildImprovementsPayload(withTips);
+  assert.equal(JSON.stringify(payload).includes("tips"), false);
+  assert.equal(JSON.stringify(payload).includes("duplicates"), false);
+});
+
 test("buildImprovementsPayload keeps only kept iterations with deltas, anonymously", () => {
   const payload = buildImprovementsPayload(RESULTS);
   assert.equal(payload.improvements.length, 2); // kept:false and no-delta entries dropped

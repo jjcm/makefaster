@@ -62,7 +62,7 @@ func databaseAtVersion(t *testing.T, version int64) *sql.DB {
 	}
 	t.Cleanup(func() { pool.Close() })
 
-	for _, table := range []string{"sites", "improvement_categories", "goose_db_version"} {
+	for _, table := range []string{"sites", "improvement_categories", "tips", "goose_db_version"} {
 		if _, err := pool.Exec("DROP TABLE IF EXISTS " + table); err != nil {
 			t.Fatalf("drop %s: %v", table, err)
 		}
@@ -111,7 +111,10 @@ func TestRenameMigrationFoldsTheLiveBoardOntoGenericNames(t *testing.T) {
 		t.Fatalf("load the pre-rename board: %v", err)
 	}
 
-	if err := db.Migrate(pool, migrationsDir); err != nil {
+	// Up to the description backfill, and no further: migration 00008 folds the
+	// gzip, brotli and precompress rows this test watches into one, and has its
+	// own live-board test below.
+	if err := goose.UpTo(pool, migrationsDir, 4); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
@@ -191,6 +194,14 @@ func TestRenameMigrationFoldsTheLiveBoardOntoGenericNames(t *testing.T) {
 		"Inline Critical HTML Shell":       "Static Welcome-screen Boot Shell",
 		"ETag Conditional Responses":       "ETag Conditional Responses for the Component Registry",
 	}
+	// The rename keeps whatever the row said; the description backfill that
+	// follows it (migration 00004) replaces the ones it recognizes with the
+	// blurb snapshotted in category_descriptions.json. Anything else means a
+	// row lost its text.
+	backfilled := map[string]string{}
+	for _, description := range liveDescriptions(t) {
+		backfilled[description.Name] = description.Now
+	}
 	for generic, original := range renamed {
 		row, found := byName[generic]
 		if !found {
@@ -202,10 +213,7 @@ func TestRenameMigrationFoldsTheLiveBoardOntoGenericNames(t *testing.T) {
 			t.Errorf("%q kept the wrong numbers: got %+v, want count=%d ms=%d pct=%v",
 				generic, row, was.Count, was.AvgImprovementMs, was.AvgImprovementPct)
 		}
-		// The rename keeps whatever the row said; the description backfill that
-		// follows it (migration 00004) replaces the ones it recognizes with the
-		// technique blurb. Anything else means a row lost its text.
-		if row.Description != was.Description && row.Description != leaderboard.CatalogDescription(generic) {
+		if row.Description != was.Description && row.Description != backfilled[generic] {
 			t.Errorf("%q lost its description: got %q", generic, row.Description)
 		}
 	}
@@ -334,7 +342,10 @@ func TestDescriptionMigrationRewritesTheLiveBoard(t *testing.T) {
 		t.Fatalf("load the pre-backfill board: %v", err)
 	}
 
-	if err := db.Migrate(pool, migrationsDir); err != nil {
+	// Up *to* the backfill only: migration 00008 then merges the three
+	// compression rows in this fixture, and is tested on its own against the
+	// live board it actually ran on.
+	if err := goose.UpTo(pool, migrationsDir, 4); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
@@ -375,13 +386,15 @@ func TestDescriptionMigrationLeavesGenericDescriptionsAlone(t *testing.T) {
 
 	original := []leaderboard.Category{
 		{Rank: 1, Name: "Lazy-Load Components", Description: "Load panes, modals, and editors only when opened", Count: 118, AvgImprovementMs: -59, AvgImprovementPct: -4.9, Icon: "default"},
-		{Rank: 2, Name: "Enable Gzip Compression", Description: leaderboard.CatalogDescription("Enable Gzip Compression"), Count: 4, AvgImprovementMs: -2995, AvgImprovementPct: -33.9, Icon: "default"},
+		// The blurb 00004 wrote for this row, spelled out because the catalog
+		// moved on when 00008 folded the row into Precompress Static Assets.
+		{Rank: 2, Name: "Enable Gzip Compression", Description: "Compress text responses (HTML, JS, CSS, JSON) with gzip so first-load transfer is smaller.", Count: 4, AvgImprovementMs: -2995, AvgImprovementPct: -33.9, Icon: "default"},
 		{Rank: 3, Name: "Image Optimization", Description: "Compress and resize images", Count: 312, AvgImprovementMs: -265, AvgImprovementPct: -17.3, Icon: "image"},
 	}
 	if err := leaderboards.ReplaceCategories(context.Background(), original); err != nil {
 		t.Fatalf("load board: %v", err)
 	}
-	if err := db.Migrate(pool, migrationsDir); err != nil {
+	if err := goose.UpTo(pool, migrationsDir, 4); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
@@ -411,11 +424,11 @@ func TestDescriptionMigrationRollsBack(t *testing.T) {
 	if err := store.New(pool).ReplaceCategories(context.Background(), before); err != nil {
 		t.Fatalf("load the pre-backfill board: %v", err)
 	}
-	if err := db.Migrate(pool, migrationsDir); err != nil {
+	// Up to the backfill and back down again — no further, because migration
+	// 00008 merges rows in a way that has no Down.
+	if err := goose.UpTo(pool, migrationsDir, 4); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	// Down *to* the migration before the backfill, so this stays a test of the
-	// backfill's own rollback as later migrations are added on top.
 	if err := goose.DownTo(pool, migrationsDir, 3); err != nil {
 		t.Fatalf("roll back: %v", err)
 	}
@@ -648,6 +661,197 @@ func mustCategories(t *testing.T, pool *sql.DB) []leaderboard.Category {
 		t.Fatalf("read categories: %v", err)
 	}
 	return categories
+}
+
+// liveBoardBeforeTheCompressionFold is GET /data/improvements.json as of
+// 2026-08-25 (backend/testdata/live_board_20260825.json): 28 rows, with the
+// compression triplet still split three ways and three descriptions still
+// narrating one repo. It is the input migrations 00008 and 00009 have to cope
+// with.
+func liveBoardBeforeTheCompressionFold(t *testing.T) []leaderboard.Category {
+	t.Helper()
+	path := filepath.Join("..", "..", "testdata", "live_board_20260825.json")
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var categories []leaderboard.Category
+	if err := json.Unmarshal(contents, &categories); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	if len(categories) != 28 {
+		t.Fatalf("the live-board fixture should hold 28 rows, got %d", len(categories))
+	}
+	return categories
+}
+
+// The compression triplet — Precompress Static Assets (16 keeps), Enable Gzip
+// Compression (5), Enable Brotli Compression (3) — is one technique split
+// three ways. Migration 00008 folds the live rows into one with counts and
+// averages combined honestly, and re-describes the survivor to cover both
+// build-time siblings and runtime compression.
+func TestCompressionFoldMigrationMergesTheLiveTriplet(t *testing.T) {
+	pool := databaseAtVersion(t, 7)
+	board := liveBoardBeforeTheCompressionFold(t)
+	if err := store.New(pool).ReplaceCategories(context.Background(), board); err != nil {
+		t.Fatalf("load the live board: %v", err)
+	}
+
+	if err := db.Migrate(pool, migrationsDir); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	after := mustCategories(t, pool)
+	if len(after) != 26 {
+		names := make([]string, 0, len(after))
+		for _, category := range after {
+			names = append(names, category.Name)
+		}
+		t.Fatalf("expected 26 categories after the fold, got %d: %v", len(after), names)
+	}
+
+	byName := categoriesByName(after)
+	for _, gone := range []string{"Enable Gzip Compression", "Enable Brotli Compression"} {
+		if _, stale := byName[gone]; stale {
+			t.Errorf("%q survived the fold", gone)
+		}
+	}
+
+	source := categoriesByName(board)
+	merged, found := byName["Precompress Static Assets"]
+	if !found {
+		t.Fatal("the merged Precompress Static Assets row is missing")
+	}
+	count, ms, pct := mergeOf(
+		source["Precompress Static Assets"],
+		source["Enable Gzip Compression"],
+		source["Enable Brotli Compression"],
+	)
+	if merged.Count != count {
+		t.Errorf("merged count: got %d, want %d", merged.Count, count)
+	}
+	if merged.AvgImprovementMs != ms {
+		t.Errorf("merged avgImprovementMs: got %d, want %d", merged.AvgImprovementMs, ms)
+	}
+	if merged.AvgImprovementPct != pct {
+		t.Errorf("merged avgImprovementPct: got %v, want %v", merged.AvgImprovementPct, pct)
+	}
+
+	// The merged row is described the way ingest now describes the technique,
+	// so a fold and a fresh submission never disagree about the blurb.
+	if want := leaderboard.CatalogDescription("Precompress Static Assets"); merged.Description != want {
+		t.Errorf("merged description: got %q, want %q", merged.Description, want)
+	}
+
+	// Every other row keeps its own numbers.
+	for _, category := range after {
+		if category.Name == "Precompress Static Assets" {
+			continue
+		}
+		was, known := source[category.Name]
+		if !known {
+			t.Errorf("%q appeared from nowhere", category.Name)
+			continue
+		}
+		if category.Count != was.Count || category.AvgImprovementMs != was.AvgImprovementMs || category.AvgImprovementPct != was.AvgImprovementPct {
+			t.Errorf("%q changed more than its rank: got %+v, want count=%d ms=%d pct=%v",
+				category.Name, category, was.Count, was.AvgImprovementMs, was.AvgImprovementPct)
+		}
+	}
+
+	// The board comes out ranked the way RerankCategories ranks it.
+	for i, category := range after {
+		if category.Rank != i+1 {
+			t.Errorf("position %d has rank %d; ranks must be 1..n in order", i, category.Rank)
+		}
+		if i == 0 {
+			continue
+		}
+		previous := after[i-1]
+		switch {
+		case previous.Count > category.Count:
+		case previous.Count < category.Count:
+			t.Errorf("%q (count %d) ranks above %q (count %d)",
+				previous.Name, previous.Count, category.Name, category.Count)
+		case previous.AvgImprovementPct > category.AvgImprovementPct:
+			t.Errorf("%q (%v%%) ranks above %q (%v%%) at equal count",
+				previous.Name, previous.AvgImprovementPct, category.Name, category.AvgImprovementPct)
+		}
+	}
+}
+
+// The three live rows whose descriptions still narrate one repo — posthog-js,
+// one repo's vendored library list, one app's tooltip wrapper — come out of
+// migration 00009 described as techniques. After both hygiene migrations, no
+// description on the live board reads as one repo's changelog.
+func TestScrubMigrationRewritesTheLiveChangelogRows(t *testing.T) {
+	pool := databaseAtVersion(t, 7)
+	board := liveBoardBeforeTheCompressionFold(t)
+	if err := store.New(pool).ReplaceCategories(context.Background(), board); err != nil {
+		t.Fatalf("load the live board: %v", err)
+	}
+
+	if err := db.Migrate(pool, migrationsDir); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	source := categoriesByName(board)
+	byName := categoriesByName(mustCategories(t, pool))
+	for name, want := range map[string]string{
+		"Defer Analytics Loading": "Load analytics, telemetry and tag managers after the page is interactive, never on the critical path.",
+		"Minify JavaScript":       "Serve minified JS bundles and vendored scripts so the same code costs fewer bytes on the critical path.",
+		"Remove Unused CSS":       "Strip stylesheet rules and style payloads nothing on the page uses so render-blocking CSS costs fewer bytes.",
+	} {
+		row, found := byName[name]
+		if !found {
+			t.Errorf("%q is missing after the scrub", name)
+			continue
+		}
+		if row.Description != want {
+			t.Errorf("%q description: got %q, want %q", name, row.Description, want)
+		}
+		was := source[name]
+		if row.Count != was.Count || row.AvgImprovementMs != was.AvgImprovementMs || row.AvgImprovementPct != was.AvgImprovementPct {
+			t.Errorf("%q changed more than its description: got %+v", name, row)
+		}
+		// The scrub and ingest have to say the same thing, so a later fold
+		// cannot flip the wording back.
+		if blurb := leaderboard.CatalogDescription(name); blurb != want {
+			t.Errorf("%q: the migration writes %q but ingest would write %q", name, want, blurb)
+		}
+	}
+
+	// The end state Jacob asked for: a weaker agent can read any row on the
+	// board as a technique, because none of them describes one repo.
+	for name, row := range byName {
+		if markers := leaderboard.SiteSpecificMarkers(row.Description); len(markers) > 0 {
+			t.Errorf("%q is still site-specific (%v): %q", name, markers, row.Description)
+		}
+	}
+}
+
+// Rolling the scrub back puts the original changelog text on any row that
+// still holds the generic blurb it wrote.
+func TestScrubMigrationRollsBack(t *testing.T) {
+	pool := databaseAtVersion(t, 7)
+	board := liveBoardBeforeTheCompressionFold(t)
+	if err := store.New(pool).ReplaceCategories(context.Background(), board); err != nil {
+		t.Fatalf("load the live board: %v", err)
+	}
+	if err := goose.UpTo(pool, migrationsDir, 9); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if err := goose.DownTo(pool, migrationsDir, 8); err != nil {
+		t.Fatalf("roll back: %v", err)
+	}
+
+	source := categoriesByName(board)
+	byName := categoriesByName(mustCategories(t, pool))
+	for _, name := range []string{"Defer Analytics Loading", "Minify JavaScript", "Remove Unused CSS"} {
+		if got := byName[name].Description; got != strings.TrimSpace(source[name].Description) {
+			t.Errorf("%q was not restored: got %q, want %q", name, got, source[name].Description)
+		}
+	}
 }
 
 // Running the rename against a board that holds nothing to rename must be a

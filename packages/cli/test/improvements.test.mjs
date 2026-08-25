@@ -108,6 +108,53 @@ test("the bundled catalog ships with the CLI and is a valid checklist", () => {
   assert.ok(bundled.every((row) => typeof row.name === "string" && typeof row.description === "string"));
 });
 
+// The bundled catalog mirrors the server's compression fold: one row for the
+// whole technique, carrying the names it subsumes so the walk can skip them on
+// other checklist sources.
+test("the bundled catalog folds the compression family into one row", () => {
+  const bundled = JSON.parse(readFileSync(BUNDLED_CHECKLIST_PATH, "utf8"));
+  const compression = bundled.filter((row) => /gzip|brotli|precompress/i.test(row.name));
+  assert.equal(compression.length, 1, "the catalog must carry exactly one compression row");
+  assert.equal(compression[0].name, "Precompress Static Assets");
+  assert.deepEqual(compression[0].subsumes, [
+    "Enable Gzip Compression",
+    "Enable Brotli Compression",
+    "Gzip / Brotli Compression",
+  ]);
+  // Ranks stay a clean 1..n walk after the fold.
+  bundled.forEach((row, i) => assert.equal(row.rank, i + 1));
+});
+
+// The imported checklist is a whitelist: `subsumes` passes through for the
+// skip rule, and anything else a source carries — tips above all — never
+// reaches the agent.
+test("the checklist keeps subsumes and strips everything else", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mf-imp-"));
+  try {
+    const file = join(dir, "extra.json");
+    writeFileSync(file, JSON.stringify([
+      {
+        rank: 1, name: "Precompress Static Assets", description: "Serve compressed text",
+        count: 24, avgImprovementMs: -3440, avgImprovementPct: -32.1,
+        subsumes: ["Enable Gzip Compression"],
+        tips: [{ text: "must never reach the agent" }],
+        internalNotes: "nor this",
+      },
+      { rank: 2, name: "Tree Shaking", description: "Remove unused JavaScript", subsumes: "not-a-list" },
+    ]));
+    const { categories } = await importChecklist({ override: file, apiBase: null, cwd: dir });
+    assert.deepEqual(categories[0].subsumes, ["Enable Gzip Compression"]);
+    const serialized = JSON.stringify(categories);
+    assert.equal(serialized.includes("tips"), false, "tips must never reach the imported checklist");
+    assert.equal(serialized.includes("must never reach the agent"), false);
+    assert.equal(serialized.includes("internalNotes"), false);
+    // A malformed subsumes is dropped rather than passed along.
+    assert.equal("subsumes" in categories[1], false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("rejects invalid checklist data with a useful error", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mf-imp-"));
   try {

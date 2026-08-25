@@ -8,7 +8,9 @@
 //	GET  /data/sites.json           live site-leaderboard rows
 //	GET  /data/improvements.json    live improvement categories
 //	GET  /api/health                { ok, embedder, threshold, inference }
-//	POST /api/submit-site           one measurement run for one site
+//	POST /api/submit-site           one measurement run for one site, plus
+//	                                optional private tips for the catalog
+//	                                maintainers (stored, never served)
 //	POST /api/submit-improvements    anonymous improvements, embedding-matched
 //	POST /api/openrouter/v1/chat/completions
 //	                                the subsidized model proxy the CLI's
@@ -186,10 +188,16 @@ func (s *Server) handleImprovements(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, categories)
 }
 
+// submitSiteResponse acknowledges a site submission. TipsRecorded counts the
+// private notes stored for the catalog maintainers — the count and nothing
+// else, because tips are write-only: they are never served back by any
+// endpoint, never rendered on a board, and never part of the checklist the
+// CLI imports.
 type submitSiteResponse struct {
-	OK      bool                `json:"ok"`
-	Created bool                `json:"created"`
-	Row     leaderboard.SiteRow `json:"row"`
+	OK           bool                `json:"ok"`
+	Created      bool                `json:"created"`
+	Row          leaderboard.SiteRow `json:"row"`
+	TipsRecorded int                 `json:"tipsRecorded,omitempty"`
 }
 
 func (s *Server) handleSubmitSite(w http.ResponseWriter, r *http.Request) {
@@ -216,13 +224,25 @@ func (s *Server) handleSubmitSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Tips ride along with the submission but are not part of it: the site row
+	// is already on the board, so a failure to store them is logged and the
+	// submission still succeeds.
+	tipsRecorded := 0
+	if len(submission.Tips) > 0 {
+		if err := s.store.SaveTips(r.Context(), submission.URL, submission.Tips, time.Now()); err != nil {
+			s.logger.Error("save tips failed", "error", err)
+		} else {
+			tipsRecorded = len(submission.Tips)
+		}
+	}
+
 	action := "updated"
 	status := http.StatusOK
 	if created {
 		action, status = "created", http.StatusCreated
 	}
-	s.logger.Info("submit-site", "action", action, "url", submission.URL, "mode", submission.Mode)
-	s.writeJSON(w, status, submitSiteResponse{OK: true, Created: created, Row: row})
+	s.logger.Info("submit-site", "action", action, "url", submission.URL, "mode", submission.Mode, "tips", tipsRecorded)
+	s.writeJSON(w, status, submitSiteResponse{OK: true, Created: created, Row: row, TipsRecorded: tipsRecorded})
 }
 
 type submitImprovementsResponse struct {
