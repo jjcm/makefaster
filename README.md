@@ -291,23 +291,40 @@ start empty and grow as loops report results:
 | `GET /data/sites.json` | live site rows, one per site per load mode | `MakefasterAPI.getSites()` |
 | `GET /data/improvements.json` | live ranked categories | `MakefasterAPI.getImprovements()` |
 | `GET /api/health` | `{ ok, embedder, threshold }` | — |
-| `POST /api/submit-site` | `{ url, favicon?, name?, lcpRaw, lcpDelta, ttiRaw, ttiDelta, mode: cold\|warm }` — upserts the site's row; URL + favicon shown publicly | `MakefasterAPI.submitSite(payload)` |
-| `POST /api/submit-improvements` | `{ improvements: [{ name, description?, deltaMs?, deltaPct? }] }` — anonymous; embedding-matched into categories (cosine similarity folds into the closest category or creates a new one) | `MakefasterAPI.submitImprovements(payload)` |
+| `POST /api/submit-site` | `{ url, favicon?, name?, lcpBefore?, lcpRaw, lcpDelta, ttiBefore?, ttiRaw, ttiDelta, mode: cold\|warm }` — upserts the site's row; URL + favicon shown publicly | `MakefasterAPI.submitSite(payload)` |
+| `POST /api/submit-improvements` | `{ improvements: [{ name, description?, deltaMs?, deltaPct? }] }` — anonymous; names are normalized to generic techniques and embedding-matched into categories | `MakefasterAPI.submitImprovements(payload)` |
 
-Deltas are percentages vs. baseline, negative = faster. `POST /api/submit-site`
-answers `201` when it created the row and `200` when it folded a new run into an
-existing one, both as `{ ok, created, row }`; invalid payloads come back as
-`400 { ok: false, errors: [...] }`. Writes are serialized, POSTs are rate
-limited to 60/minute/IP, bodies are capped at 256 KB, and every response
-carries permissive CORS so the SPA can be hosted anywhere.
+Each metric has both ends of the run: `lcpRaw`/`ttiRaw` are the measurement
+after the last kept change, `lcpBefore`/`ttiBefore` the pre-loop baseline, and
+the deltas the percentage between them, negative = faster. The two `*Before`
+fields are optional — a client that omits them has the baseline recovered from
+the delta (`before = after / (1 + delta/100)`).
+
+`POST /api/submit-site` answers `201` when it created the row and `200` when it
+folded a new run into an existing one, both as `{ ok, created, row }`; invalid
+payloads come back as `400 { ok: false, errors: [...] }`. Writes are serialized,
+POSTs are rate limited to 60/minute/IP, bodies are capped at 256 KB, and every
+response carries permissive CORS so the SPA can be hosted anywhere.
 
 ### Embeddings
 
-`POST /api/submit-improvements` embeds each entry (name doubled, then the
-description) and compares it to every current category by cosine similarity: at
-or above the threshold it folds into that category's running averages, below it
-becomes a new category. Entries in one payload are processed in order against
-the growing list, so two similar novel entries create one category.
+`POST /api/submit-improvements` first reduces each submitted name to a **generic
+technique name**, then matches it. The board is a catalog of techniques, so a
+name that only describes one repo — `Lazy-load Hidden 262KB Changelog
+Rocket.gif` — would become a permanent row of one. Normalization strips
+parentheticals, byte sizes and file names, folds the `lazy-load <one widget>`
+family into five buckets (components, unseen images, third-party SDKs,
+analytics, data fetches), and maps other known families onto their technique
+name. A name that already matches a category on the board wins over any rule.
+The rule is documented for submitters in `packages/skill/SKILL.md`.
+
+The normalized name then decides the fold: a category whose name carries the
+same significant word stems folds without consulting the embedder, and anything
+else is embedded (name doubled, then the description) and compared to every
+current category by cosine similarity — at or above the threshold it folds into
+that category's running averages, below it becomes a new category. Entries in
+one payload are processed in order against the growing list, so two similar
+novel entries create one category.
 
 Two backends, picked by whether an API key is set:
 
@@ -327,7 +344,8 @@ Row shapes:
 ```js
 // site leaderboard — one row per site per load mode
 { "name": "Example", "url": "example.com", "favicon": "https://…",
-  "lcpRaw": 1842, "lcpDelta": -34, "ttiRaw": 2945, "ttiDelta": -29,
+  "lcpBefore": 2791, "lcpRaw": 1842, "lcpDelta": -34,
+  "ttiBefore": 4148, "ttiRaw": 2945, "ttiDelta": -29,
   "mode": "cold", "tests": 6, "measuredAt": "2024-05-12T14:15:00.000Z" }
 
 // improvement leaderboard — one row per improvement category
@@ -336,6 +354,12 @@ Row shapes:
   "count": 286, "avgImprovementMs": -497, "avgImprovementPct": -28.6,
   "icon": "gzip" }
 ```
+
+`rank` is **times improved, descending** — how often a technique has worked
+across sites, which is what makes it worth trying next. Ties break on the
+biggest average improvement, then the name. Both boards let you re-sort in the
+browser: the improvement board on times improved and average improvement, the
+site board on either end of LCP and TTI plus the improvement between them.
 
 `measuredAt` is always ISO-8601 with milliseconds, in UTC.
 
