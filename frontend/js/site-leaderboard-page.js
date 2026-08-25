@@ -52,6 +52,22 @@ const PR_GLYPH =
 const HTTP_URL = /^https?:\/\//i;
 
 /**
+ * How the run's kept changes split between reusable techniques and findings
+ * that only mattered to this site. A row with no split — every submission from
+ * before the board recorded one, and every run that kept nothing — shows
+ * nothing at all, rather than an honest-looking 0%.
+ */
+function keepSplitMarkup(row) {
+  var generic = row.genericKeepPct;
+  var siteSpecific = row.siteSpecificKeepPct;
+  if (typeof generic !== "number" || generic + (siteSpecific || 0) <= 0) return "";
+  return (
+    '<div class="site-keeps" title="' + generic + '% of the kept changes were reusable techniques, ' +
+    (100 - generic) + '% were specific to this site">' + generic + "% generic</div>"
+  );
+}
+
+/**
  * The site's name, linked to the pull request that made it faster when the row
  * has one. Rows submitted before the board stored that link — and any run that
  * was not opened as a PR — stay plain text rather than pointing nowhere.
@@ -265,6 +281,7 @@ class SiteLeaderboardPage extends HTMLElement {
           "name", "url", "pr_url", "mode",
           "lcp_before_ms", "lcp_after_ms", "lcp_improvement_pct",
           "tti_before_ms", "tti_after_ms", "tti_improvement_pct",
+          "generic_keep_pct", "site_specific_keep_pct",
           "tests", "measured_at",
         ],
         self.filtered().map(function (r) {
@@ -272,6 +289,7 @@ class SiteLeaderboardPage extends HTMLElement {
             r.name, r.url, r.prUrl || r.pr || "", r.mode,
             r.lcpBefore, r.lcpRaw, r.lcpDelta,
             r.ttiBefore, r.ttiRaw, r.ttiDelta,
+            r.genericKeepPct, r.siteSpecificKeepPct,
             r.tests, r.measuredAt,
           ];
         })
@@ -422,7 +440,8 @@ class SiteLeaderboardPage extends HTMLElement {
       cell.className = "site-cell";
       cell.appendChild(self.faviconCell(r));
       var meta = document.createElement("div");
-      meta.innerHTML = siteNameMarkup(r) + '<div class="site-url">' + escapeHtml(r.url) + "</div>";
+      meta.innerHTML =
+        siteNameMarkup(r) + '<div class="site-url">' + escapeHtml(r.url) + "</div>" + keepSplitMarkup(r);
       cell.appendChild(meta);
       siteTd.appendChild(cell);
       tr.appendChild(siteTd);

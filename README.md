@@ -292,7 +292,7 @@ start empty and grow as loops report results:
 | `GET /data/sites.json` | live site rows, one per site per load mode | `MakefasterAPI.getSites()` |
 | `GET /data/improvements.json` | live ranked categories | `MakefasterAPI.getImprovements()` |
 | `GET /api/health` | `{ ok, embedder, threshold }` | — |
-| `POST /api/submit-site` | `{ url, favicon?, name?, prUrl?, lcpBefore?, lcpRaw, lcpDelta, ttiBefore?, ttiRaw, ttiDelta, mode: cold\|warm }` — upserts the site's row; URL + favicon shown publicly, `name` reduced to the product's own name, `prUrl` (or `pr`) linked from it | `MakefasterAPI.submitSite(payload)` |
+| `POST /api/submit-site` | `{ url, favicon?, name?, prUrl?, genericKeepPct?, siteSpecificKeepPct?, lcpBefore?, lcpRaw, lcpDelta, ttiBefore?, ttiRaw, ttiDelta, mode: cold\|warm }` — upserts the site's row; URL + favicon shown publicly, `name` reduced to the product's own name, `prUrl` (or `pr`) linked from it | `MakefasterAPI.submitSite(payload)` |
 | `POST /api/submit-improvements` | `{ improvements: [{ name, description?, deltaMs?, deltaPct? }] }` — anonymous; names and descriptions are normalized to generic techniques and embedding-matched into categories | `MakefasterAPI.submitImprovements(payload)` |
 
 Each metric has both ends of the run: `lcpRaw`/`ttiRaw` are the measurement
@@ -312,6 +312,15 @@ The rule is documented for submitters in `packages/skill/SKILL.md`.
 `prUrl` is the pull request the run's kept changes were opened as. The site
 leaderboard links the row's name to it, so the board can show the diff behind a
 percentage; a row without one is plain text and the key is left off the JSON.
+
+`genericKeepPct` / `siteSpecificKeepPct` say how the run's kept changes divided
+between techniques any site could reuse and findings that could only ever have
+mattered to that product — both are real speedups, but only the first belongs on
+the improvement board, and the CLI submits only those as categories. The two are
+complementary, so sending either one is enough; both zero (or both omitted)
+means no split was reported, and the board then shows none rather than a
+0%. Rows submitted before the fields existed are left blank: the split is not
+recoverable from what was stored.
 
 `POST /api/submit-site` answers `201` when it created the row and `200` when it
 folded a new run into an existing one, both as `{ ok, created, row }`; invalid
@@ -369,9 +378,11 @@ Row shapes:
 ```js
 // site leaderboard — one row per site per load mode.
 // prUrl is the pull request the run was opened as, and is absent when the row
-// has none — the board links the site name to it when it is there.
+// has none — the board links the site name to it when it is there. The two keep
+// percentages are absent together when the run reported no split.
 { "name": "Example", "url": "example.com", "favicon": "https://…",
   "prUrl": "https://github.com/jjcm/example/pull/1",
+  "genericKeepPct": 80, "siteSpecificKeepPct": 20,
   "lcpBefore": 2791, "lcpRaw": 1842, "lcpDelta": -34,
   "ttiBefore": 4148, "ttiRaw": 2945, "ttiDelta": -29,
   "mode": "cold", "tests": 6, "measuredAt": "2024-05-12T14:15:00.000Z" }

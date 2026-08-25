@@ -136,6 +136,53 @@ func TestValidateSitePayloadReadsThePullRequestUnderEitherName(t *testing.T) {
 	}
 }
 
+// The two keep percentages are complementary, so either one implies the other,
+// both zero means no split was reported, and a pair that does not add up is a
+// broken client rather than a number to guess at.
+func TestValidateSitePayloadReadsTheKeepSplit(t *testing.T) {
+	metrics := `"url": "example.com", "mode": "cold", "lcpRaw": 1000, "lcpDelta": -1, "ttiRaw": 2000, "ttiDelta": -2`
+	cases := []struct {
+		fields               string
+		generic, siteSpecifc int
+	}{
+		{`, "genericKeepPct": 80, "siteSpecificKeepPct": 20`, 80, 20},
+		{`, "genericKeepPct": 80`, 80, 20},
+		{`, "siteSpecificKeepPct": 20`, 80, 20},
+		// All keeps site-specific: the pair still adds to 100.
+		{`, "genericKeepPct": 0, "siteSpecificKeepPct": 100`, 0, 100},
+		{`, "siteSpecificKeepPct": 100`, 0, 100},
+		// Nothing kept, and nothing said: no split either way.
+		{`, "genericKeepPct": 0, "siteSpecificKeepPct": 0`, 0, 0},
+		{`, "genericKeepPct": 0`, 0, 0},
+		{`, "genericKeepPct": null, "siteSpecificKeepPct": null`, 0, 0},
+		{``, 0, 0},
+		// Percentages are whole numbers on the board.
+		{`, "genericKeepPct": 66.6`, 67, 33},
+	}
+	for _, test := range cases {
+		submission, err := leaderboard.ValidateSitePayload(decode(t, "{"+metrics+test.fields+"}"))
+		if err != nil {
+			t.Errorf("%s: unexpected error: %v", test.fields, err)
+			continue
+		}
+		if submission.GenericKeepPct != test.generic || submission.SiteSpecificKeepPct != test.siteSpecifc {
+			t.Errorf("%s: got %d/%d, want %d/%d", test.fields,
+				submission.GenericKeepPct, submission.SiteSpecificKeepPct, test.generic, test.siteSpecifc)
+		}
+	}
+
+	for _, broken := range []string{
+		`, "genericKeepPct": 80, "siteSpecificKeepPct": 80`,
+		`, "genericKeepPct": 140`,
+		`, "genericKeepPct": -10`,
+		`, "genericKeepPct": "80"`,
+	} {
+		if _, err := leaderboard.ValidateSitePayload(decode(t, "{"+metrics+broken+"}")); err == nil {
+			t.Errorf("%s should have been rejected", broken)
+		}
+	}
+}
+
 func TestValidateImprovementsPayload(t *testing.T) {
 	improvements, err := leaderboard.ValidateImprovementsPayload(decode(t, `{
 		"url": "example.com",

@@ -408,6 +408,85 @@ func TestSubmitSiteStoresTheProductNameAndPullRequest(t *testing.T) {
 	}
 }
 
+// How the run's keeps split between reusable techniques and site-specific
+// findings, round-tripped. A row that reported no split must carry no split, so
+// the board can tell "half the keeps were one-offs" apart from "we don't know".
+func TestSubmitSiteStoresTheKeepSplit(t *testing.T) {
+	base := boot(t, freshDatabase(t)).URL
+
+	var submitted struct {
+		Row leaderboard.SiteRow `json:"row"`
+	}
+	body := `{"url":"https://split.example.com","mode":"cold","genericKeepPct":80,"siteSpecificKeepPct":20,
+		"lcpRaw":1400,"lcpDelta":-30,"ttiRaw":2300,"ttiDelta":-23}`
+	if status := postJSON(t, base+"/api/submit-site", body, &submitted); status != http.StatusCreated {
+		t.Fatalf("submit = %d, want 201", status)
+	}
+	if submitted.Row.GenericKeepPct != 80 || submitted.Row.SiteSpecificKeepPct != 20 {
+		t.Errorf("split: got %d/%d, want 80/20", submitted.Row.GenericKeepPct, submitted.Row.SiteSpecificKeepPct)
+	}
+
+	// Only one side of the split is enough, since they are complementary.
+	var implied struct {
+		Row leaderboard.SiteRow `json:"row"`
+	}
+	oneSided := `{"url":"https://implied.example.com","mode":"cold","genericKeepPct":25,
+		"lcpRaw":1400,"lcpDelta":-30,"ttiRaw":2300,"ttiDelta":-23}`
+	if status := postJSON(t, base+"/api/submit-site", oneSided, &implied); status != http.StatusCreated {
+		t.Fatalf("one-sided submit = %d, want 201", status)
+	}
+	if implied.Row.GenericKeepPct != 25 || implied.Row.SiteSpecificKeepPct != 75 {
+		t.Errorf("split: got %d/%d, want 25/75", implied.Row.GenericKeepPct, implied.Row.SiteSpecificKeepPct)
+	}
+
+	// A submission from before the fields existed reports nothing, and the board
+	// says nothing.
+	silent := `{"url":"https://silent.example.com","mode":"cold","lcpRaw":1400,"lcpDelta":-30,"ttiRaw":2300,"ttiDelta":-23}`
+	if status := postJSON(t, base+"/api/submit-site", silent, nil); status != http.StatusCreated {
+		t.Fatalf("silent submit = %d, want 201", status)
+	}
+
+	res, err := http.Get(base + "/data/sites.json")
+	if err != nil {
+		t.Fatalf("GET /data/sites.json: %v", err)
+	}
+	payload, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+
+	var rows []leaderboard.SiteRow
+	if err := json.Unmarshal(payload, &rows); err != nil {
+		t.Fatalf("decode sites: %v", err)
+	}
+	for _, row := range rows {
+		switch row.URL {
+		case "split.example.com":
+			if row.GenericKeepPct != 80 || row.SiteSpecificKeepPct != 20 {
+				t.Errorf("the board lost the split: %+v", row)
+			}
+		case "silent.example.com":
+			if row.GenericKeepPct != 0 || row.SiteSpecificKeepPct != 0 {
+				t.Errorf("a row with no split got one: %+v", row)
+			}
+		}
+	}
+	if strings.Contains(string(payload), `"genericKeepPct":0`) {
+		t.Errorf("a row with no split must omit the keys, got %s", payload)
+	}
+
+	// An inconsistent pair is a broken client, and says so.
+	var rejected struct {
+		Errors []string `json:"errors"`
+	}
+	broken := `{"url":"https://broken.example.com","mode":"cold","genericKeepPct":80,"siteSpecificKeepPct":80,
+		"lcpRaw":1400,"lcpDelta":-30,"ttiRaw":2300,"ttiDelta":-23}`
+	if status := postJSON(t, base+"/api/submit-site", broken, &rejected); status != http.StatusBadRequest {
+		t.Fatalf("inconsistent split = %d, want 400", status)
+	}
+	if !strings.Contains(strings.Join(rejected.Errors, " "), "add up to 100") {
+		t.Errorf("expected an explanation of the split, got %v", rejected.Errors)
+	}
+}
+
 // The site board shows before and after for both metrics, so both have to
 // survive a round trip — including for a client that only sends the after
 // value and the delta, which is every CLI released before lcpBefore existed.

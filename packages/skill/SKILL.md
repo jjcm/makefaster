@@ -86,8 +86,9 @@ One hypothesis per iteration, no exceptions:
      measured noise floor, AND by at least **5% or 20 ms** (whichever is
      larger for the metric's scale). An FCP-only win that **regresses LCP
      does not count** — that is rearranging deck chairs.
-   - Kept → record the iteration with `kept: true` and set
-     `missStreak` to `0` in `state.json`.
+   - Kept → record the iteration with `kept: true`, classify it with
+     `generic: true` or `generic: false` (see "Classifying a keep" below), and
+     set `missStreak` to `0` in `state.json`.
    - Anything else → **revert completely** (revert means revert — no
      half-kept experiments), record `kept: false`, and increment
      `missStreak`.
@@ -171,6 +172,50 @@ your repo with the catalog's own line for the technique (or drops it entirely if
 it cannot). So a site-specific submission does not create a site-specific row.
 Write the generic name and description yourself anyway: the normalizer is a
 backstop, not a copywriter, and what it cannot rescue it throws away.
+
+## Classifying a keep — generic technique or site-specific finding
+
+**Every iteration you keep must say which it is: `"generic": true` or
+`"generic": false`.** Reverts can leave it out. The two boards want different
+things, and this field is what routes a keep to the right one:
+
+- **generic** — a technique that belongs on the improvement leaderboard, or is
+  already on it. Another site could apply it: enable gzip, lazy-load optional
+  components, reduce the font payload, serve content-hashed immutable assets,
+  don't block first paint on client-side auth.
+- **site-specific** — a finding that could only ever matter to this product. A
+  one-off bug, an architecture quirk, one named widget that is not a reusable
+  technique.
+
+The test is not "was the cause unusual", it is **"does the fix map to a
+technique another site could reuse?"** A keep whose story is *"the session
+spinner gated the whole homepage because of how the feature-flag client boots"*
+is a site-specific **finding**, but if the fix you made is "stop blocking first
+paint on client-side auth" — a technique any site can apply — then classify the
+keep as **generic**. Only mark `generic: false` when there is no transferable
+lesson at all.
+
+What each classification does:
+
+- **generic keeps are submitted to the improvement leaderboard** as categories,
+  under the naming and description rules above;
+- **site-specific keeps are not.** They stay in `results.json` for your writeup
+  and are counted in the site row's split. Do not invent a category name for
+  one — a one-off finding on the shared board is exactly the row-of-one problem
+  the naming rule exists to prevent.
+
+Then report the split over **kept iterations only** — not every hypothesis you
+tried:
+
+```
+genericKeepPct      = round(generic keeps / all keeps * 100)
+siteSpecificKeepPct = 100 - genericKeepPct
+```
+
+Five keeps of which four are generic is `genericKeepPct: 80`,
+`siteSpecificKeepPct: 20`. Write both at the top level of `results.json`; the
+CLI submits them with the site stats, and the site leaderboard shows how much of
+the run was reusable technique. A run that kept nothing has no split to report.
 
 ## Naming the site — the product, not your deployment
 
@@ -265,12 +310,24 @@ milliseconds. Deltas are negative when the site got faster.
       "description": "Inline the above-the-fold rules first paint needs and load the rest of the stylesheet asynchronously",
       "category": "Inline Critical CSS",
       "notes": "Extracted the 4.1KB of rules the hero uses out of app.css into <style> in index.html",
+      "generic": true,
       "deltaMs": -260,
       "deltaPct": -10.8,
       "kept": true
     },
     {
       "n": 2,
+      "name": "Stop gating first paint on the flag client",
+      "description": "Render the page without waiting on the client-side flag or auth round trip",
+      "category": null,
+      "notes": "The session spinner blocked the homepage until the feature-flag SDK resolved",
+      "generic": false,
+      "deltaMs": -410,
+      "deltaPct": -14.2,
+      "kept": true
+    },
+    {
+      "n": 3,
       "name": "Preload LCP image",
       "description": "Preload the image the largest contentful paint waits on",
       "category": "Preload LCP Image",
@@ -280,6 +337,8 @@ milliseconds. Deltas are negative when the site got faster.
       "kept": false
     }
   ],
+  "genericKeepPct": 50,
+  "siteSpecificKeepPct": 50,
   "missStreak": 5,
   "stoppedReason": "miss-streak"
 }
@@ -322,7 +381,14 @@ Field notes:
   belongs: the files you touched, the sizes you measured, why you reverted.
   Never submitted anywhere; it stays in `results.json` for the writeup you make
   in this repo.
+- `iterations[].generic` — **required on every iteration you keep**: `true` when
+  the fix is a technique another site could reuse, `false` when it is a finding
+  about this product only. See "Classifying a keep" above. Only `true` keeps are
+  submitted to the improvement leaderboard. Reverts can omit it.
 - `iterations[].deltaMs` / `deltaPct` — measured north-star change for that
   single iteration (median vs. the previous kept state), negative = faster.
+- `genericKeepPct` / `siteSpecificKeepPct` — the split above, over kept
+  iterations only, as whole percents that add to 100. Submitted with the site
+  stats. Leave both out when the run kept nothing.
 - `missStreak` — mirror of the counter in `state.json` at exit time.
 - `stoppedReason` — `"miss-streak"`, `"user"`, or `null` while running.

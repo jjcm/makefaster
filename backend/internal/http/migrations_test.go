@@ -594,21 +594,33 @@ func TestSiteNameMigrationRollsBack(t *testing.T) {
 		t.Fatalf("roll back: %v", err)
 	}
 
-	after, err := store.New(pool).Sites(context.Background())
+	// Read the two columns directly: rolling back past the later migrations
+	// takes their columns with it, and this is a test of migration 00006.
+	after, err := pool.Query("SELECT url, name, pr_url FROM sites")
 	if err != nil {
 		t.Fatalf("read sites: %v", err)
 	}
-	byURL := make(map[string]leaderboard.SiteRow, len(after))
-	for _, row := range after {
-		byURL[row.URL] = row
-	}
-	for _, row := range rows {
-		got := byURL[row.URL]
-		if got.Name != row.Was {
-			t.Errorf("%s name: got %q, want it restored to %q", row.URL, got.Name, row.Was)
+	defer after.Close()
+
+	restored := map[string][2]string{}
+	for after.Next() {
+		var url, name, prURL string
+		if err := after.Scan(&url, &name, &prURL); err != nil {
+			t.Fatalf("scan site: %v", err)
 		}
-		if got.PRURL != "" {
-			t.Errorf("%s kept a pull request the rollback wrote: %q", row.URL, got.PRURL)
+		restored[url] = [2]string{name, prURL}
+	}
+	if err := after.Err(); err != nil {
+		t.Fatalf("read sites: %v", err)
+	}
+
+	for _, row := range rows {
+		got := restored[row.URL]
+		if got[0] != row.Was {
+			t.Errorf("%s name: got %q, want it restored to %q", row.URL, got[0], row.Was)
+		}
+		if got[1] != "" {
+			t.Errorf("%s kept a pull request the rollback wrote: %q", row.URL, got[1])
 		}
 	}
 }

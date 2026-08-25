@@ -249,3 +249,40 @@ func TestUpsertSiteStoresTheProductNameAndCarriesThePullRequest(t *testing.T) {
 		t.Errorf("prUrl: got %q", linked.PRURL)
 	}
 }
+
+// The keep split is the latest run's, and a run that does not report one — an
+// older CLI, or a loop that kept nothing — leaves the last one standing rather
+// than blanking the row.
+func TestUpsertSiteCarriesTheKeepSplit(t *testing.T) {
+	now := time.Date(2026, 8, 25, 10, 0, 0, 0, time.UTC)
+	created := leaderboard.UpsertSite(nil, leaderboard.SiteSubmission{
+		URL: "example.com", Mode: "cold", LCPRaw: 1400, TTIRaw: 2300,
+		GenericKeepPct: 80, SiteSpecificKeepPct: 20,
+	}, now)
+	if created.GenericKeepPct != 80 || created.SiteSpecificKeepPct != 20 {
+		t.Errorf("split: got %d/%d, want 80/20", created.GenericKeepPct, created.SiteSpecificKeepPct)
+	}
+
+	silent := leaderboard.UpsertSite(&created, leaderboard.SiteSubmission{
+		URL: "example.com", Mode: "cold", LCPRaw: 1300, TTIRaw: 2200,
+	}, now.Add(time.Hour))
+	if silent.GenericKeepPct != 80 || silent.SiteSpecificKeepPct != 20 {
+		t.Errorf("a run that reported no split erased the last one: %+v", silent)
+	}
+
+	replaced := leaderboard.UpsertSite(&silent, leaderboard.SiteSubmission{
+		URL: "example.com", Mode: "cold", LCPRaw: 1200, TTIRaw: 2100,
+		GenericKeepPct: 50, SiteSpecificKeepPct: 50,
+	}, now.Add(2*time.Hour))
+	if replaced.GenericKeepPct != 50 || replaced.SiteSpecificKeepPct != 50 {
+		t.Errorf("split: got %d/%d, want 50/50", replaced.GenericKeepPct, replaced.SiteSpecificKeepPct)
+	}
+
+	// A brand new row with nothing reported has no split, not a zero one.
+	bare := leaderboard.UpsertSite(nil, leaderboard.SiteSubmission{
+		URL: "bare.example.com", Mode: "cold", LCPRaw: 1000, TTIRaw: 2000,
+	}, now)
+	if bare.GenericKeepPct != 0 || bare.SiteSpecificKeepPct != 0 {
+		t.Errorf("expected no split, got %d/%d", bare.GenericKeepPct, bare.SiteSpecificKeepPct)
+	}
+}

@@ -65,7 +65,29 @@ function modePayload(results, mode, siteUrl) {
     ...(results?.site?.name ? { name: results.site.name } : {}),
     ...(results?.site?.favicon ? { favicon: results.site.favicon } : {}),
     ...(sitePrUrl(results) ? { prUrl: sitePrUrl(results) } : {}),
+    ...keepSplit(results),
   };
+}
+
+/**
+ * The split between kept changes that were reusable techniques and kept changes
+ * that were findings about this site only, as whole percents that add to 100.
+ *
+ * Counted from the iterations rather than from whatever `genericKeepPct` the
+ * session wrote, because these percentages have to describe the same set of
+ * keeps that `buildImprovementsPayload` files on the improvement board — a site
+ * row claiming "80% generic" while five categories were submitted would be
+ * worse than no number. A keep that does not say which it is counts as generic,
+ * for the same reason: that is what the improvement board receives.
+ *
+ * A run that kept nothing has no split to report, and sends neither field.
+ */
+function keepSplit(results) {
+  const keeps = (results?.iterations || []).filter((it) => it && it.kept === true);
+  if (keeps.length === 0) return {};
+  const generic = keeps.filter((it) => it.generic !== false).length;
+  const genericKeepPct = Math.round((generic / keeps.length) * 100);
+  return { genericKeepPct, siteSpecificKeepPct: 100 - genericKeepPct };
 }
 
 /**
@@ -99,10 +121,16 @@ export function buildSitePayloads(results, siteUrl) {
  * identity — just names, descriptions, and measured deltas. The fields are
  * listed one by one rather than spread, so an iteration's `notes` (where the
  * skill puts everything specific to this repo) cannot ride along.
+ *
+ * A keep marked `generic: false` is a finding about one product rather than a
+ * technique anyone else can apply, so it stays in results.json and on the site
+ * row's split instead of becoming a row on the shared improvement board. A keep
+ * that says nothing is submitted, which is what every session written before
+ * the field existed does.
  */
 export function buildImprovementsPayload(results) {
   const kept = (results?.iterations || [])
-    .filter((it) => it && it.kept === true && it.name)
+    .filter((it) => it && it.kept === true && it.name && it.generic !== false)
     .filter((it) => typeof it.deltaMs === "number" || typeof it.deltaPct === "number")
     .slice(0, MAX_IMPROVEMENTS)
     .map((it) => ({

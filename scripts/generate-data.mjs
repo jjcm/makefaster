@@ -216,11 +216,20 @@ function pushSite(site, { hero = false } = {}) {
     ? `https://github.com/jjcm/${site.url.split(".")[0]}/pull/${ri(1, 9)}`
     : "";
 
+  // Same for the generic/site-specific split: real boards carry rows that
+  // reported one and rows submitted before the fields existed.
+  const splits = [100, 80, 75, 67, 60, 50, 40, 33];
+  const genericKeepPct = rand() < 0.8 ? splits[ri(0, splits.length - 1)] : null;
+  const keepSplit = genericKeepPct === null
+    ? {}
+    : { genericKeepPct, siteSpecificKeepPct: 100 - genericKeepPct };
+
   for (const [mode, m] of [["cold", cold], ["warm", warm]]) {
     rows.push({
       name: site.name,
       url: site.url,
       ...(prUrl ? { prUrl } : {}),
+      ...keepSplit,
       favicon: favicon(site.url),
       lcpRaw: m.lcpRaw,
       lcpDelta: m.lcpDelta,

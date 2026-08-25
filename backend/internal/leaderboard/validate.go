@@ -84,6 +84,59 @@ func present(field any, exists bool) bool {
 	return exists && field != nil
 }
 
+// keepSplit reads how the run's kept changes divided between reusable
+// techniques and findings that only ever mattered to this site.
+//
+// The two are complementary by definition, so one of them is enough: a
+// submission that sends only `genericKeepPct: 80` means 20% site-specific. Both
+// zero — including a submission that says nothing at all — means the split is
+// unknown, which is the same thing the board does with a run that kept nothing:
+// show no split. Anything else that does not add up to 100 is a broken client
+// rather than a number to guess at, so it is rejected with the reason.
+func keepSplit(body map[string]any) (int, int, []string) {
+	generic, genericGiven := body["genericKeepPct"]
+	genericGiven = present(generic, genericGiven)
+	siteSpecific, siteSpecificGiven := body["siteSpecificKeepPct"]
+	siteSpecificGiven = present(siteSpecific, siteSpecificGiven)
+
+	if !genericGiven && !siteSpecificGiven {
+		return 0, 0, nil
+	}
+
+	var errors []string
+	if genericGiven && !finiteInRange(generic, 0, 100) {
+		errors = append(errors, "genericKeepPct must be a percentage between 0 and 100 when provided")
+	}
+	if siteSpecificGiven && !finiteInRange(siteSpecific, 0, 100) {
+		errors = append(errors, "siteSpecificKeepPct must be a percentage between 0 and 100 when provided")
+	}
+	if len(errors) > 0 {
+		return 0, 0, errors
+	}
+
+	genericValue, _ := numberValue(generic)
+	siteSpecificValue, _ := numberValue(siteSpecific)
+	genericPct := int(jsRound(genericValue))
+	siteSpecificPct := int(jsRound(siteSpecificValue))
+
+	switch {
+	case genericGiven && siteSpecificGiven:
+		// Both zero is the "no keeps" reading; anything else has to be a split.
+		if genericPct+siteSpecificPct != 100 && genericPct+siteSpecificPct != 0 {
+			return 0, 0, []string{"genericKeepPct and siteSpecificKeepPct must add up to 100, or both be 0 when nothing was kept"}
+		}
+	case genericGiven:
+		if genericPct > 0 {
+			siteSpecificPct = 100 - genericPct
+		}
+	default:
+		if siteSpecificPct > 0 {
+			genericPct = 100 - siteSpecificPct
+		}
+	}
+	return genericPct, siteSpecificPct, nil
+}
+
 // trimmedField reads the first of `names` the body actually carries, with a
 // string value trimmed so " https://… " validates as the URL it is. The bool
 // reports whether any of the names was present and non-null.
@@ -131,8 +184,9 @@ func BaselineFromDelta(measured int, deltaPct float64) int {
 
 // ValidateSitePayload checks a POST /api/submit-site body:
 //
-//	{ url, favicon?, name?, prUrl?, lcpBefore?, lcpRaw, lcpDelta,
-//	  ttiBefore?, ttiRaw, ttiDelta, mode: cold|warm }
+//	{ url, favicon?, name?, prUrl?, genericKeepPct?, siteSpecificKeepPct?,
+//	  lcpBefore?, lcpRaw, lcpDelta, ttiBefore?, ttiRaw, ttiDelta,
+//	  mode: cold|warm }
 //
 // lcpRaw/ttiRaw are the measurement after the loop and the deltas are
 // percentages vs. the pre-loop baseline, negative = faster. lcpBefore/ttiBefore
@@ -188,6 +242,9 @@ func ValidateSitePayload(body map[string]any) (SiteSubmission, error) {
 		errors = append(errors, "prUrl must be an http(s) URL when provided")
 	}
 
+	genericPct, siteSpecificPct, splitErrors := keepSplit(body)
+	errors = append(errors, splitErrors...)
+
 	name, nameExists := body["name"]
 	if present(name, nameExists) && !isShortName(name) {
 		errors = append(errors, "name must be a short string when provided")
@@ -226,6 +283,8 @@ func ValidateSitePayload(body map[string]any) (SiteSubmission, error) {
 	if prURLString, ok := prURL.(string); ok {
 		submission.PRURL = prURLString
 	}
+	submission.GenericKeepPct = genericPct
+	submission.SiteSpecificKeepPct = siteSpecificPct
 	if nameString, ok := name.(string); ok && strings.TrimSpace(nameString) != "" {
 		submission.Name = strings.TrimSpace(nameString)
 	}

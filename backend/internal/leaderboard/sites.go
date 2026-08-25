@@ -69,9 +69,9 @@ func DefaultFaviconForURL(host string) string {
 // UpsertSite folds one validated measurement into the row that already exists
 // for this (url, mode), or builds a brand new one.
 //
-// An existing row keeps its derived name/favicon/PR link unless the submission
-// overrides them, has its metrics replaced by the latest run, and increments
-// its test counter. A new row starts at one test.
+// An existing row keeps its derived name/favicon/PR link and its last reported
+// keep split unless the submission overrides them, has its metrics replaced by
+// the latest run, and increments its test counter. A new row starts at one test.
 //
 // Whichever name wins is reduced to the product's own name (ProductSiteName),
 // including a name the row already carried: a row named after somebody's
@@ -89,6 +89,13 @@ func UpsertSite(existing *SiteRow, submission SiteSubmission, now time.Time) Sit
 		Mode:       submission.Mode,
 		Tests:      1,
 		MeasuredAt: FormatTimestamp(now),
+	}
+
+	// A submission that reports no split — an older CLI, or a run that kept
+	// nothing — leaves the last one standing rather than erasing it.
+	row.GenericKeepPct, row.SiteSpecificKeepPct = submission.GenericKeepPct, submission.SiteSpecificKeepPct
+	if row.GenericKeepPct == 0 && row.SiteSpecificKeepPct == 0 && existing != nil {
+		row.GenericKeepPct, row.SiteSpecificKeepPct = existing.GenericKeepPct, existing.SiteSpecificKeepPct
 	}
 
 	name := firstNonEmpty(submission.Name, existingName(existing), DisplayNameForURL(submission.URL))
