@@ -118,12 +118,17 @@ no dependencies — raw ANSI, three panels, repainted from
 - **AUTORESEARCH / WEBSITE SPEED** — the loop counter, the current experiment,
   and every metric the session measured (`lcpMs`, `tbtMs`, `fcpMs`, `ttiMs`,
   plus `cls` and `score` when the agent records them) as candidate vs baseline.
-  Rows for metrics you did not measure are left out rather than shown empty.
+  Rows for metrics you did not measure are left out rather than shown empty. The
+  candidate is `results.final` once the last measurement pass has been written,
+  and until then it is the state the kept iterations have walked the site to —
+  so a keep moves the column the moment it is recorded.
 - **RUN TIMINGS** — one bar per run on the north-star metric, with a dashed
-  baseline, a star on the best run, and the rolling average. The schema stores
-  per-iteration deltas rather than absolutes, so the bars are the baseline
-  walked forward through the deltas — kept iterations move the running value,
-  reverted ones do not.
+  baseline, a star on the best run, and the rolling average. Every measured
+  iteration is a bar, kept or reverted: a miss was profiled just as carefully,
+  and only kept ones move the running value. An iteration can report either the
+  absolute value the run landed on or the `deltaMs` it moved, and one that
+  reports neither is a row the agent has not filled in yet — so it gets no bar
+  rather than a guessed one. Skips are not runs and never appear.
 
 `q` or Ctrl-C stops the round and restores the terminal; a resize re-renders.
 The dashboard needs a TTY on both stdin and stdout — when output is piped, or
