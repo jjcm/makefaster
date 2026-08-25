@@ -11,7 +11,7 @@
     "packages/skill"
   ],
   "scripts": {
-    "test": "node --test packages/cli/test/*.test.mjs",
+    "test": "node --test packages/cli/test/*.test.mjs frontend/test/*.test.mjs",
     "serve": "./run.sh"
   },
   "engines": {

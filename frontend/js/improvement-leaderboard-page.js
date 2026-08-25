@@ -9,8 +9,22 @@ import "./geo-row.js";
 import "./spec-footer.js";
 import { getImprovements } from "./api.js";
 import { escapeHtml, renderPagination, downloadCsv, mulberry32 } from "./format.js";
+import { nextSort, sortRows, sortableHeader } from "./table-sort.js";
 
 const PER_PAGE = 12;
+
+/**
+ * Times improved is the default and the headline: a technique's value to the
+ * next site is how often it has worked. Average improvement is negative when
+ * the site got faster, so the useful first click on it is ascending — biggest
+ * improvement first.
+ */
+const SORT_COLUMNS = [
+  { key: "count", value: (r) => r.count, firstDir: "desc" },
+  { key: "avgImprovementPct", value: (r) => r.avgImprovementPct, firstDir: "asc" },
+];
+
+const DEFAULT_SORT = { key: "count", dir: "desc" };
 
 const fmt = new Intl.NumberFormat("en-US");
 
@@ -74,7 +88,7 @@ function sparkbars(seed, pct) {
 class ImprovementLeaderboardPage extends HTMLElement {
   constructor() {
     super();
-    this.state = { page: 1 };
+    this.state = { page: 1, sort: DEFAULT_SORT };
     this.rows = [];
   }
 
@@ -114,14 +128,7 @@ class ImprovementLeaderboardPage extends HTMLElement {
             <div class="table-scroll">
               <table class="data-table" id="improvements-table">
                 <thead>
-                  <tr>
-                    <th scope="col">#</th>
-                    <th scope="col">Improvement Category</th>
-                    <th scope="col">Description</th>
-                    <th scope="col">Times Improved</th>
-                    <th scope="col">Avg Improvement</th>
-                    <th scope="col"><span class="visually-hidden"></span></th>
-                  </tr>
+                  <tr id="improvements-head"></tr>
                 </thead>
                 <tbody id="improvements-tbody"></tbody>
               </table>
@@ -138,6 +145,7 @@ class ImprovementLeaderboardPage extends HTMLElement {
       </div>`;
 
     this.els = {
+      head: this.querySelector("#improvements-head"),
       tbody: this.querySelector("#improvements-tbody"),
       showing: this.querySelector("#improvements-showing"),
       pagination: this.querySelector("#improvements-pagination"),
@@ -145,16 +153,30 @@ class ImprovementLeaderboardPage extends HTMLElement {
     };
 
     var self = this;
+
+    // One listener on the header row, so re-rendering the <th>s cannot leave
+    // stale handlers behind.
+    this.els.head.addEventListener("click", function (event) {
+      var button = event.target.closest("[data-sort-key]");
+      if (!button) return;
+      self.state.sort = nextSort(self.state.sort, SORT_COLUMNS, button.dataset.sortKey);
+      self.state.page = 1;
+      self.renderTable();
+    });
+
     this.els.exportBtn.addEventListener("click", function () {
       downloadCsv(
         "makefaster-improvements.csv",
         ["rank", "name", "description", "times_improved", "avg_improvement_ms", "avg_improvement_pct"],
-        self.rows.map(function (r, i) {
-          return [r.rank || i + 1, r.name, r.description, r.count, r.avgImprovementMs, r.avgImprovementPct];
+        self.sorted().map(function (r, i) {
+          return [i + 1, r.name, r.description, r.count, r.avgImprovementMs, r.avgImprovementPct];
         })
       );
     });
 
+    // Draw the header before the fetch resolves, so it is still there on the
+    // error path.
+    this.renderHead();
     this.load();
   }
 
@@ -175,14 +197,32 @@ class ImprovementLeaderboardPage extends HTMLElement {
       });
   }
 
+  sorted() {
+    return sortRows(this.rows, SORT_COLUMNS, this.state.sort);
+  }
+
+  renderHead() {
+    var sort = this.state.sort;
+    this.els.head.innerHTML =
+      '<th scope="col">#</th>' +
+      '<th scope="col">Improvement Category</th>' +
+      '<th scope="col">Description</th>' +
+      sortableHeader(sort, "count", "Times Improved") +
+      sortableHeader(sort, "avgImprovementPct", "Avg Improvement") +
+      '<th scope="col"><span class="visually-hidden"></span></th>';
+  }
+
   renderTable() {
     var self = this;
-    var pageCount = Math.max(1, Math.ceil(this.rows.length / PER_PAGE));
+    this.renderHead();
+
+    var data = this.sorted();
+    var pageCount = Math.max(1, Math.ceil(data.length / PER_PAGE));
     if (this.state.page > pageCount) this.state.page = pageCount;
     var start = (this.state.page - 1) * PER_PAGE;
-    var pageRows = this.rows.slice(start, start + PER_PAGE);
+    var pageRows = data.slice(start, start + PER_PAGE);
 
-    if (!this.rows.length) {
+    if (!data.length) {
       this.els.tbody.innerHTML =
         '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:34px 16px;">' +
         "No categories yet &mdash; the board fills up as loops submit their improvements." +
@@ -194,10 +234,12 @@ class ImprovementLeaderboardPage extends HTMLElement {
 
     this.els.tbody.innerHTML = pageRows
       .map(function (r, i) {
-        var rank = r.rank || start + i + 1;
+        // The "#" column is the position in the order on screen; the server's
+        // own rank only seeds the sparkbars so they do not reshuffle on sort.
+        var position = start + i + 1;
         return (
           "<tr>" +
-          '<td class="rank-cell">' + rank + "</td>" +
+          '<td class="rank-cell">' + position + "</td>" +
           '<td><div class="cat-cell"><span class="cat-icon">' +
           iconMarkup(r.icon) +
           '</span><span class="cat-name">' +
@@ -206,7 +248,7 @@ class ImprovementLeaderboardPage extends HTMLElement {
           '<td class="desc-cell">' + escapeHtml(r.description || "") + "</td>" +
           '<td class="count-cell">' + escapeHtml(fmt.format(r.count)) + "</td>" +
           '<td class="green-cell">' + escapeHtml(r.avgImprovementPct + "%") + "</td>" +
-          '<td class="sparkbars-cell">' + sparkbars(rank, r.avgImprovementPct) + "</td>" +
+          '<td class="sparkbars-cell">' + sparkbars(r.rank || position, r.avgImprovementPct) + "</td>" +
           "</tr>"
         );
       })
@@ -216,9 +258,9 @@ class ImprovementLeaderboardPage extends HTMLElement {
       "Showing " +
       (start + 1) +
       " to " +
-      Math.min(start + PER_PAGE, this.rows.length) +
+      Math.min(start + PER_PAGE, data.length) +
       " of " +
-      this.rows.length +
+      data.length +
       " improvement categories";
 
     renderPagination(this.els.pagination, this.state.page, pageCount, function (p) {

@@ -678,6 +678,28 @@ site-header { display: block; }
   margin-top: 3px;
 }
 
+/* A sortable header is a button that inherits the header's own type, so the
+   column reads identically whether or not it can be sorted. */
+.data-table thead th .th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.data-table thead th .th-sort:hover { color: var(--red); }
+.data-table thead th .th-sort:focus-visible { outline: 1px solid var(--line-strong); outline-offset: 3px; }
+.data-table thead th .sort-caret { font-size: 9px; line-height: 1; opacity: 0.4; }
+.data-table thead th .th-sort.is-active .sort-caret { opacity: 1; color: var(--red); }
+.data-table thead th[aria-sort="ascending"],
+.data-table thead th[aria-sort="descending"] { background: rgba(23, 57, 94, 0.05); }
+
 .data-table thead th + th,
 .data-table tbody td + td { border-left: 1px solid var(--hairline); }
 
@@ -708,6 +730,10 @@ site-header { display: block; }
 
 .num-cell { font-family: var(--font-mono); font-weight: 600; font-size: 16px; color: var(--ink); }
 .num-cell .spark { margin-left: 14px; color: var(--ink); opacity: 0.8; vertical-align: baseline; }
+
+/* The pre-loop baseline sits beside the measurement it was beaten by, so it is
+   muted: the eye should land on the "after" figure. */
+.num-cell--before { font-weight: 500; color: var(--muted); }
 
 .delta-cell {
   font-family: var(--font-mono);
