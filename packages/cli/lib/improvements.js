@@ -48,12 +48,23 @@ function isValidChecklist(data) {
   return Array.isArray(data) && data.length > 0 && data.every((row) => row && typeof row.name === "string");
 }
 
+/**
+ * The checklist rows, reduced to the fields the walk needs. This is a
+ * whitelist on purpose: whatever else a source carries — server bookkeeping,
+ * private tips, anything a future API adds — never reaches the agent's
+ * imported checklist. `subsumes` is the one optional extra: the names of rows
+ * a keep on this row makes redundant, so the agent can skip them instead of
+ * re-proving the same technique.
+ */
 function topFifty(categories) {
   return [...categories]
     .sort((a, b) => (a.rank ?? Number.MAX_SAFE_INTEGER) - (b.rank ?? Number.MAX_SAFE_INTEGER))
     .slice(0, TOP_N)
-    .map(({ name, description, count, avgImprovementMs, avgImprovementPct, rank }) => ({
+    .map(({ name, description, count, avgImprovementMs, avgImprovementPct, rank, subsumes }) => ({
       rank, name, description, count, avgImprovementMs, avgImprovementPct,
+      ...(Array.isArray(subsumes) && subsumes.every((s) => typeof s === "string") && subsumes.length > 0
+        ? { subsumes }
+        : {}),
     }));
 }
 
