@@ -4,6 +4,7 @@ import {
   DEFAULT_API_BASE,
   buildImprovementsPayload,
   buildSitePayloads,
+  buildTracePayload,
   resolveApiBase,
 } from "../lib/apiClient.js";
 
@@ -222,4 +223,51 @@ test("buildImprovementsPayload leaves site-specific findings off the shared boar
     }),
     null
   );
+});
+
+const TRACE_STATE = {
+  runId: "run-1",
+  provider: "cursor",
+  model: "claude-fable-5",
+  round: 2,
+  startedAt: "2026-08-25T10:00:00.000Z",
+};
+
+test("buildTracePayload carries the thinking blocks in order plus the iteration list", () => {
+  const payload = buildTracePayload({
+    blocks: [{ text: "  first  " }, { text: "" }, { text: "second" }],
+    results: RESULTS,
+    state: TRACE_STATE,
+    resultsSubmitted: true,
+    siteUrl: "example.com",
+  });
+
+  assert.deepEqual(payload.thinking, [{ text: "first" }, { text: "second" }]);
+  assert.equal(payload.runId, "run-1");
+  assert.equal(payload.agent, "cursor");
+  assert.equal(payload.round, 2);
+  assert.equal(payload.resultsSubmitted, true);
+  assert.equal(payload.results.iterations.length, RESULTS.iterations.length);
+  assert.deepEqual(payload.results.final, RESULTS.final);
+  // A trace is not an anonymous submission — it names the product and the PR on
+  // purpose, so a training set can line it up with the run that produced it.
+  assert.equal(payload.product, "Example");
+});
+
+test("buildTracePayload is capped, so a build log cannot ride in as thinking", () => {
+  const payload = buildTracePayload({
+    blocks: Array.from({ length: 600 }, (_, i) => ({ text: `${i} `.padEnd(9000, "x") })),
+    results: null,
+    state: TRACE_STATE,
+  });
+
+  assert.ok(payload.thinking.length <= 400, `blocks: ${payload.thinking.length}`);
+  assert.ok(payload.thinking.every((block) => block.text.length <= 8000));
+  const total = payload.thinking.reduce((sum, block) => sum + block.text.length, 0);
+  assert.ok(total <= 192_000, `total characters: ${total}`);
+});
+
+test("buildTracePayload sends nothing when there is nothing to send", () => {
+  assert.equal(buildTracePayload({ blocks: [], results: null, state: TRACE_STATE }), null);
+  assert.equal(buildTracePayload({ blocks: [{ text: "   " }], results: { parseError: true }, state: TRACE_STATE }), null);
 });
