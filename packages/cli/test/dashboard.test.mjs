@@ -76,6 +76,100 @@ test("deriveRuns skips unmeasured iterations rather than plotting a guess", () =
   assert.deepEqual(runs.map((r) => r.value), [1000, 900]);
 });
 
+// The whole point of the chart: a measured iteration is a run whatever the
+// verdict was. A run that only appears when it wins is a highlight reel.
+test("a keep adds a bar and moves the candidate off the baseline", () => {
+  const results = {
+    northStar: "lcp",
+    baseline: { warm: { lcpMs: 4658, ttiMs: 6000 } },
+    iterations: [{ n: 1, name: "Defer non-critical scripts", deltaMs: -1050, deltaPct: -22.5, kept: true }],
+  };
+  const { runs, candidate, best } = deriveRuns(results);
+  assert.deepEqual(runs.map((r) => r.value), [4658, 3608]);
+  assert.equal(candidate.index, 1);
+  assert.equal(candidate.metrics.lcpMs, 3608);
+  assert.equal(best.label, "001");
+
+  // No results.final yet — mid-run the candidate column is where the keeps have
+  // walked the site to, not the baseline sitting at 0%.
+  const lcp = deriveMetrics(results).find((m) => m.short === "LCP");
+  assert.equal(lcp.candidate, "3.61 s");
+  assert.equal(lcp.baseline, "4.66 s");
+  assert.equal(lcp.changeLabel, "-22.5%");
+  assert.equal(lcp.better, true);
+  assert.equal(deriveVerdict(results).label, "IMPROVED");
+});
+
+test("a reverted miss still gets a bar, and does not move the candidate", () => {
+  const results = {
+    northStar: "lcp",
+    baseline: { cold: { lcpMs: 2000 } },
+    iterations: [
+      { n: 1, name: "Preload LCP image", deltaMs: 210, deltaPct: 10.5, kept: false },
+      { n: 2, name: "Enable gzip", deltaMs: -300, deltaPct: -15, kept: true },
+      { n: 3, name: "Inline critical CSS", deltaMs: 40, deltaPct: 2.4, kept: false },
+    ],
+  };
+  const { runs, candidate } = deriveRuns(results);
+  assert.deepEqual(runs.map((r) => r.value), [2000, 2210, 1700, 1740]);
+  assert.deepEqual(runs.map((r) => r.kept), [true, false, true, false]);
+  // The last run is a miss, so the site still stands at the last keep.
+  assert.equal(candidate.index, 2);
+  assert.equal(candidate.metrics.lcpMs, 1700);
+});
+
+test("an iteration that reports where it landed is plotted without a delta", () => {
+  const results = {
+    northStar: "lcp",
+    baseline: { warm: { lcpMs: 4658, ttiMs: 6000 } },
+    iterations: [{ n: 1, name: "Defer non-critical scripts", kept: true, measured: { warm: { lcpMs: 3608, ttiMs: 5200 } } }],
+  };
+  const { runs, candidate } = deriveRuns(results);
+  assert.deepEqual(runs.map((r) => r.value), [4658, 3608]);
+  // The delta is the measurement against the state it ran from, so the verdict
+  // and the RESULT line still have a number to quote.
+  assert.equal(runs[1].deltaMs, -1050);
+  assert.equal(deriveVerdict(results).label, "IMPROVED");
+  assert.equal(candidate.metrics.ttiMs, 5200);
+  assert.equal(deriveMetrics(results).find((m) => m.short === "TTI").candidate, "5.20 s");
+});
+
+// An absolute wins over a delta, because it is the number that was measured
+// rather than one derived from a running total.
+test("an absolute north-star value is trusted over a stale delta", () => {
+  const { runs } = deriveRuns({
+    baseline: { cold: { lcpMs: 2000 } },
+    iterations: [{ n: 1, name: "x", deltaMs: -1, kept: true, measured: { cold: { lcpMs: 1500 } } }],
+  });
+  assert.deepEqual(runs.map((r) => r.value), [2000, 1500]);
+  assert.equal(runs[1].deltaMs, -500);
+});
+
+test("a stub with no numbers is not a run, a verdict, or a candidate", () => {
+  const results = {
+    northStar: "lcp",
+    baseline: { cold: { lcpMs: 2000, ttiMs: 3000 } },
+    iterations: [{ kept: false }, { n: 2, kept: true }],
+  };
+  const { runs, candidate } = deriveRuns(results);
+  assert.deepEqual(runs.map((r) => r.value), [2000], "an unfilled row has nothing to plot");
+  assert.equal(candidate.isBaseline, true);
+  assert.equal(deriveVerdict(results).label, "PENDING");
+  assert.deepEqual(deriveMetrics(results).map((m) => m.changeLabel), ["0%", "0%"]);
+});
+
+test("a skip never gets a bar, even when it was written into iterations", () => {
+  const { runs } = deriveRuns({
+    baseline: { cold: { lcpMs: 2000 } },
+    iterations: [
+      { n: 1, name: "Enable gzip", skipped: true, measured: { cold: { lcpMs: 2000 } } },
+      { n: 2, name: "Lazy-load components", kept: "skipped", deltaMs: 0 },
+      { n: 3, name: "Inline critical CSS", deltaMs: -120, kept: true },
+    ],
+  });
+  assert.deepEqual(runs.map((r) => r.label), ["000", "003"]);
+});
+
 test("deriveRuns needs a baseline before it will plot anything", () => {
   assert.deepEqual(deriveRuns(null).runs, []);
   assert.deepEqual(deriveRuns({ iterations: [{ deltaMs: -10 }] }).runs, []);
@@ -161,6 +255,33 @@ test("buildDashboard renders all three panels with their real numbers", () => {
   assert.match(frame, /ROLLING AVERAGE \(last 5 runs\)/);
   assert.match(frame, /TOTAL RUNS: 4/);
   assert.match(frame, /IMPROVEMENT vs BASELINE: -30\.6%/);
+});
+
+// Mid-run, before results.final exists: the panels must have moved off the
+// baseline, or the user reads a working loop as a stalled one.
+test("buildDashboard advances the loop and the candidate before final is written", () => {
+  const frame = text(buildDashboard({
+    size: { columns: 120, rows: 44 },
+    results: {
+      northStar: "lcp",
+      noiseFloor: { lcpMs: 40 },
+      baseline: { warm: { lcpMs: 4658 } },
+      iterations: [
+        { n: 1, name: "Preload LCP image", deltaMs: 210, deltaPct: 4.5, kept: false },
+        { n: 2, name: "Defer non-critical scripts", deltaMs: -1050, deltaPct: -22.5, kept: true },
+      ],
+    },
+    log: [],
+  }));
+
+  assert.match(frame, /LOOP 002/);
+  assert.match(frame, /CURRENT EXPERIMENT: Defer non-critical scripts/);
+  assert.match(frame, /RESULT: IMPROVED/);
+  assert.match(frame, /exp_002/, "the candidate column names the last kept run");
+  assert.match(frame, /PAGE LOAD TIME \(LCP\)\s+3\.61 s\s+4\.66 s\s+-22\.5%/);
+  assert.match(frame, /TOTAL RUNS: 3/, "baseline, the miss, and the keep");
+  assert.match(frame, /3608/);
+  assert.match(frame, /4868/);
 });
 
 test("buildDashboard survives an empty session and a half-written file", () => {

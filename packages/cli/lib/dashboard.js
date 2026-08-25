@@ -9,10 +9,15 @@
  *
  * Everything is derived from `.makefaster/results.json` (the contract in
  * packages/skill/SKILL.md) plus the log the hidden agent's event stream feeds.
- * The schema carries per-iteration deltas rather than per-iteration absolutes,
- * so run values are reconstructed by walking the deltas from the baseline —
- * which is exactly what `deltaMs` means: the change against the previous kept
- * state.
+ * An iteration may report its measurement either way round: an absolute
+ * north-star value for the run, or the `deltaMs` it moved against the previous
+ * kept state. Absolutes win when both are present, and a run reported only as a
+ * delta is reconstructed by walking the deltas forward from the baseline.
+ *
+ * Every measured iteration is a run, kept or reverted — a miss was profiled too,
+ * and hiding it would make the chart a highlight reel. What is not a run is an
+ * iteration carrying no measurement at all: a skip, or a stub the agent has not
+ * filled in yet.
  */
 
 import { BLOCKS, BLOCK_FULL, BOX, COLORS, STAR, fit, formatDuration, seg } from "./theme.js";
@@ -60,11 +65,17 @@ function formatMetric(metric, value) {
 /**
  * Candidate vs baseline per metric, with the signed change. `better` is the
  * direction that matters for that metric, not the sign of the number.
+ *
+ * `results.final` is the last full measurement pass and is authoritative once it
+ * exists — but it is written at the end of the run, so mid-run the candidate is
+ * the state the kept iterations have walked the site to. Without that fallback
+ * the column sits on the baseline at 0% for the whole session, which reads as
+ * "nothing has worked" rather than "the final pass has not run yet".
  */
 export function deriveMetrics(results) {
   const mode = pickMode(results);
   const baseline = results?.baseline?.[mode] ?? null;
-  const candidate = results?.final?.[mode] ?? baseline;
+  const candidate = results?.final?.[mode] ?? deriveRuns(results).candidate?.metrics ?? baseline;
   return METRICS.flatMap((metric) => {
     const base = baseline?.[metric.key];
     const now = candidate?.[metric.key];
@@ -93,47 +104,138 @@ function changeLabel(metric, change, raw) {
   return `${rounded > 0 ? "+" : ""}${rounded}%`;
 }
 
+/** A skip costs no measurement, so it is never a run and never gets a bar. */
+function isSkipped(iteration) {
+  return iteration?.skipped === true || String(iteration?.kept ?? "").toLowerCase() === "skipped";
+}
+
+/** The absolute metric values an object carries, ignoring everything else on it. */
+function metricValues(source) {
+  if (!source || typeof source !== "object") return null;
+  let values = null;
+  for (const metric of METRICS) {
+    if (!Number.isFinite(source[metric.key])) continue;
+    values ??= {};
+    values[metric.key] = source[metric.key];
+  }
+  return values;
+}
+
 /**
- * One bar per run: the baseline, then every measured iteration. Iteration
- * values are the baseline walked forward through the deltas — kept iterations
- * move the running value, reverted ones do not.
+ * The absolute measurement an iteration recorded, if it recorded one. The schema
+ * asks for `measured.<mode>`, but an agent that writes the same numbers flat, or
+ * straight under the mode, has still measured the run — and a real measurement
+ * is not worth throwing away over the shape it arrived in. Later sources are
+ * more specific, so they win.
+ */
+function iterationMeasurement(iteration, mode) {
+  if (!iteration || typeof iteration !== "object") return null;
+  const sources = [iteration, iteration.after, iteration.measured, iteration[mode], iteration.after?.[mode], iteration.measured?.[mode]];
+  let values = null;
+  for (const source of sources) {
+    const found = metricValues(source);
+    if (found) values = { ...values, ...found };
+  }
+  return values;
+}
+
+/**
+ * Every iteration that carries a real measurement, in file order, each with the
+ * north-star value it landed on, the delta it moved from the state before it,
+ * and the metric snapshot the site was in when it was measured.
+ *
+ * An iteration is measured when it has an absolute north-star value or a finite
+ * delta — the two honest ways of saying "this was tested". Both keeps and misses
+ * qualify: a reverted experiment was profiled just as carefully as a kept one.
+ * An iteration with neither is a stub the agent has not filled in yet, and a
+ * stub is not a result — it gets no bar, no verdict and no RESULT line.
+ */
+export function measuredIterations(results) {
+  const mode = pickMode(results);
+  const key = northStarKey(results);
+  const baseline = results?.baseline?.[mode] ?? null;
+  let running = Number.isFinite(baseline?.[key]) ? baseline[key] : null;
+  let runningMetrics = metricValues(baseline) ?? {};
+  const measured = [];
+
+  for (const [position, iteration] of (results?.iterations ?? []).entries()) {
+    if (!iteration || isSkipped(iteration)) continue;
+    const values = iterationMeasurement(iteration, mode);
+
+    let value = null;
+    if (Number.isFinite(values?.[key])) value = values[key];
+    else if (Number.isFinite(iteration.deltaMs) && running !== null) value = running + iteration.deltaMs;
+    else if (Number.isFinite(iteration.deltaPct) && running !== null) value = running * (1 + iteration.deltaPct / 100);
+
+    // An absolute is measured against the state it was run from, so it produces
+    // its own delta; a delta with no baseline to anchor it is still a number the
+    // agent measured, even though there is nothing to plot it against.
+    const deltaMs = value !== null && running !== null ? value - running
+      : Number.isFinite(iteration.deltaMs) ? iteration.deltaMs
+      : null;
+    if (value === null && deltaMs === null) continue;
+
+    const deltaPct = Number.isFinite(iteration.deltaPct) ? iteration.deltaPct
+      : deltaMs !== null && running ? (deltaMs / running) * 100
+      : null;
+    const index = Number.isFinite(iteration.n) ? iteration.n : position + 1;
+    const kept = iteration.kept === true;
+    const metrics = { ...runningMetrics, ...values, ...(value === null ? null : { [key]: value }) };
+
+    measured.push({ iteration, position, index, name: iteration.name || `iteration ${index}`, value, deltaMs, deltaPct, kept, metrics });
+    // Only a keep moves the site; a revert put everything back where it was.
+    if (kept && value !== null) {
+      running = value;
+      runningMetrics = metrics;
+    }
+  }
+  return measured;
+}
+
+/**
+ * One bar per run: the baseline, then every measured iteration — keeps and
+ * misses alike. `candidate` is the run the site currently stands at, which is
+ * the last kept run, or the baseline when nothing has been kept yet.
  */
 export function deriveRuns(results) {
   const mode = pickMode(results);
   const key = northStarKey(results);
-  const baselineValue = results?.baseline?.[mode]?.[key];
-  if (!Number.isFinite(baselineValue)) return { baseline: null, runs: [], best: null, key };
+  const baselineMetrics = results?.baseline?.[mode] ?? null;
+  const baselineValue = baselineMetrics?.[key];
+  if (!Number.isFinite(baselineValue)) return { baseline: null, runs: [], best: null, key, candidate: null };
 
-  const runs = [{ index: 0, label: "000", value: baselineValue, kept: true, name: "baseline", isBaseline: true }];
-  let running = baselineValue;
-  for (const [i, iteration] of (results?.iterations ?? []).entries()) {
-    if (!Number.isFinite(iteration?.deltaMs)) continue; // unmeasured: nothing honest to plot
-    const value = running + iteration.deltaMs;
-    const index = Number.isFinite(iteration.n) ? iteration.n : i + 1;
+  const runs = [{
+    index: 0, label: "000", value: baselineValue, kept: true, name: "baseline",
+    isBaseline: true, deltaMs: 0, metrics: metricValues(baselineMetrics) ?? {},
+  }];
+  for (const entry of measuredIterations(results)) {
+    if (!Number.isFinite(entry.value)) continue;
     runs.push({
-      index,
-      label: String(index).padStart(3, "0"),
-      value,
-      kept: iteration.kept === true,
-      name: iteration.name || `iteration ${index}`,
+      index: entry.index,
+      label: String(entry.index).padStart(3, "0"),
+      value: entry.value,
+      kept: entry.kept,
+      name: entry.name,
       isBaseline: false,
+      deltaMs: entry.deltaMs,
+      metrics: entry.metrics,
     });
-    if (iteration.kept === true) running = value;
   }
 
   const best = runs.reduce((low, run) => (low === null || run.value < low.value ? run : low), null);
-  return { baseline: baselineValue, runs, best, key };
+  const candidate = runs.findLast((run) => run.kept) ?? runs[0];
+  return { baseline: baselineValue, runs, best, key, candidate };
 }
 
 /** IMPROVED / REGRESSED / UNCHANGED for the most recent measured iteration. */
 export function deriveVerdict(results) {
-  const iterations = (results?.iterations ?? []).filter((it) => Number.isFinite(it?.deltaMs));
-  const latest = iterations.at(-1);
-  if (!latest) return { label: "PENDING", better: null, iteration: null };
-  const noiseFloor = results?.noiseFloor?.lcpMs ?? 0;
-  if (Math.abs(latest.deltaMs) <= noiseFloor) return { label: "UNCHANGED", better: null, iteration: latest };
-  if (latest.deltaMs < 0) return { label: "IMPROVED", better: true, iteration: latest };
-  return { label: "REGRESSED", better: false, iteration: latest };
+  const latest = measuredIterations(results).at(-1);
+  const of = (label, better) => ({ label, better, iteration: latest?.iteration ?? null, name: latest?.name ?? null });
+  if (!latest || !Number.isFinite(latest.deltaMs)) return of("PENDING", null);
+  const noiseFloor = results?.noiseFloor?.[northStarKey(results)] ?? results?.noiseFloor?.lcpMs ?? 0;
+  if (Math.abs(latest.deltaMs) <= noiseFloor) return of("UNCHANGED", null);
+  if (latest.deltaMs < 0) return of("IMPROVED", true);
+  return of("REGRESSED", false);
 }
 
 function experimentId(index) {
@@ -223,7 +325,7 @@ function autoresearchPanel({ width, height, results, state, status, updatedAt })
   const verdict = deriveVerdict(results);
   const metrics = deriveMetrics(results);
   const loop = Math.max(0, runs.runs.length - 1);
-  const currentExperiment = verdict.iteration?.name || (results ? "measuring baseline" : "starting up");
+  const currentExperiment = verdict.name || (results ? "measuring baseline" : "starting up");
 
   // Below roughly 100 columns the side-by-side table cannot hold its own
   // columns, and the left metrics already carry candidate, baseline and Δ — so
@@ -249,7 +351,9 @@ function autoresearchPanel({ width, height, results, state, status, updatedAt })
   if (!showTable) {
     body.push(...(left.length > 0 ? left : [[seg("waiting for the first measurement", "muted")]]));
   } else {
-    const right = comparisonRows({ metrics, width: tableWidth, candidateIndex: verdict.iteration ? loop : 0 });
+    // The candidate column is whatever run the site currently stands at, so it
+    // names the last kept experiment rather than the last one attempted.
+    const right = comparisonRows({ metrics, width: tableWidth, candidateIndex: runs.candidate?.index ?? 0 });
     for (let i = 0; i < Math.max(left.length, right.length); i++) {
       const row = left[i] ?? [];
       body.push([
