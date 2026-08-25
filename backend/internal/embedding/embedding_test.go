@@ -126,17 +126,19 @@ func TestParaphrasesClearTheLocalThreshold(t *testing.T) {
 		description string
 		expect      []string
 	}{
-		{"Enable Brotli on text assets", "Enabled Brotli compression for HTML, CSS and JS responses", []string{"Gzip / Brotli Compression", "Enable Text Compression"}},
+		{"Enable Brotli on text assets", "Enabled Brotli compression for HTML, CSS and JS responses", []string{"Gzip / Brotli Compression"}},
 		{"Compress hero images", "Compressed and resized the oversized hero images", []string{"Image Optimization"}},
 		{"Remove unused JavaScript", "Tree-shook the main bundle and dropped dead code", []string{"Tree Shaking"}},
 		{"Inline critical CSS", "Inlined above-the-fold styles into the document head", []string{"Inline Critical CSS"}},
-		{"Lazy load below-fold images", "Deferred offscreen images with loading=lazy", []string{"Lazy-Load Below-Fold Images"}},
-		{"Defer third-party scripts", "Analytics and chat widgets now load after interactive", []string{"Defer Third-Party Scripts"}},
-		{"Subset web fonts", "Shipped only the glyphs the pages actually use", []string{"Font Subsetting", "Font Optimization"}},
+		{"Lazy load below-fold images", "Deferred offscreen images with loading=lazy", []string{"Lazy-Load Unseen Images"}},
+		// The board buckets deferred third-party work by what is being
+		// deferred, so either bucket is a correct home for this one.
+		{"Defer third-party scripts", "Analytics and chat widgets now load after interactive", []string{"Lazy-Load Third-Party SDKs", "Defer Analytics Loading"}},
+		{"Subset web fonts", "Shipped only the glyphs the pages actually use", []string{"Font Subsetting", "Reduce Font Payload"}},
 		{"Serve AVIF images", "Switched product images from JPEG to AVIF format", []string{"AVIF / WebP Image Formats"}},
 		{"Preload the LCP image", "Added a preload hint for the largest contentful paint image", []string{"Preload LCP Image", "Resource Preloading"}},
 		{"Preconnect to font origin", "Added preconnect hints for the font CDN origin", []string{"Preconnect To Required Origins"}},
-		{"Enable gzip on API responses", "Turned on gzip text compression for JSON API responses", []string{"Gzip / Brotli Compression", "Enable Text Compression"}},
+		{"Enable gzip on API responses", "Turned on gzip text compression for JSON API responses", []string{"Gzip / Brotli Compression", "Precompress Static Assets"}},
 		{"Split bundle by route", "Split the vendor bundle along navigation route boundaries", []string{"Code Splitting By Route"}},
 		{"Add service worker caching", "Cache the app shell and static assets for repeat visits", []string{"Service Worker Caching"}},
 		{"Immutable cache for hashed assets", "Set long cache lifetimes on content-hashed static assets", []string{"Content-Hashed Immutable Assets", "Cache Header Improvements"}},
@@ -198,8 +200,6 @@ func TestLocalMatchesTheReferenceSimilarities(t *testing.T) {
 		{"Compress hero images", "Compressed and resized the oversized hero images", "Image Optimization", 0.664},
 		{"Inline critical CSS", "Inlined above-the-fold styles into the document head", "Inline Critical CSS", 0.977},
 		{"Subset web fonts", "Shipped only the glyphs the pages actually use", "Font Subsetting", 0.898},
-		// Novel: the nearest category is unrelated and well below threshold.
-		{"Rewrite ORM in Rust", "Rewrote the ORM data layer in Rust", "OffscreenCanvas Rendering", 0.129},
 	}
 
 	for _, item := range cases {
@@ -208,5 +208,14 @@ func TestLocalMatchesTheReferenceSimilarities(t *testing.T) {
 		if name != item.bestName || rounded != item.similarity {
 			t.Errorf("%q: got %q at %v, expected %q at %v", item.name, name, rounded, item.bestName, item.similarity)
 		}
+	}
+
+	// Novel improvements are pinned by distance, not by which unrelated row
+	// happens to be nearest: that depends on the fixture's contents, while the
+	// property the threshold rests on is only that nothing comes close.
+	novelName, novelSimilarity := bestMatch(t, categories, "Rewrite ORM in Rust", "Rewrote the ORM data layer in Rust")
+	if novelSimilarity >= embedding.DefaultThresholdLocal/2 {
+		t.Errorf("%q matched %q at %.3f — expected well under half the threshold %v",
+			"Rewrite ORM in Rust", novelName, novelSimilarity, embedding.DefaultThresholdLocal)
 	}
 }

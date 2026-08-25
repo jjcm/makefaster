@@ -24,6 +24,20 @@ This skill's loop discipline is packaged as [makefaster](https://github.com/jjcm
 
 The operational loop skill lives at [`packages/skill/SKILL.md`](https://github.com/jjcm/makefaster/blob/main/packages/skill/SKILL.md) in that repo; the document you are reading is its technique catalog — read it when picking hypotheses.
 
+### Name techniques generically
+
+Everything in this catalog is named as a **generic technique**, and so is every row of the improvement leaderboard. When you report a kept iteration, the category name must be reusable verbatim by the next site: no product or component proper nouns, no file or module names, no byte sizes, no CSS class names, and no process footnotes like "(re-test after landscape change)". Site-specific detail goes in the description.
+
+| bad | good |
+|---|---|
+| `Inline the Shared Stylesheet (re-test After Landscape Change)` | `Inline shared stylesheets` |
+| `Lazy-load Chat Side-pane Components` | `Lazy-load components` |
+| `Lazy-load Hidden 262KB Changelog Rocket.gif` | `Lazy-load unseen images` |
+| `Import highlight.js/lib/common` | `Subset syntax-highlighter bundle` |
+| `Playfair Display 4 Weights → 1` | `Reduce font payload` |
+
+One technique, one bucket — do not create a category per component, image, or vendor. The full rule, including how it interacts with `results.json`, is in [`packages/skill/SKILL.md`](https://github.com/jjcm/makefaster/blob/main/packages/skill/SKILL.md#naming-an-improvement--generic-techniques-only).
+
 ---
 
 ## Impact: largest (boot payload and critical JS)

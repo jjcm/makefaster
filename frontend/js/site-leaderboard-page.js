@@ -9,8 +9,31 @@ import "./geo-row.js";
 import "./spec-footer.js";
 import { getSites } from "./api.js";
 import { escapeHtml, renderPagination, downloadCsv } from "./format.js";
+import { nextSort, sortRows, sortableHeader } from "./table-sort.js";
 
 const PER_PAGE = 10;
+
+/**
+ * Both ends of each metric are shown and each is sortable on its own header:
+ * clicking "Before" sorts the pre-loop measurement, clicking "After" sorts the
+ * measurement the loop ended on. Times sort fastest-first on the first click;
+ * the improvement columns are negative when the site got faster, so their
+ * first click is ascending — biggest improvement first.
+ */
+const SORT_COLUMNS = [
+  { key: "lcpBefore", value: (r) => r.lcpBefore, firstDir: "asc" },
+  { key: "lcpRaw", value: (r) => r.lcpRaw, firstDir: "asc" },
+  { key: "lcpDelta", value: (r) => r.lcpDelta, firstDir: "asc" },
+  { key: "ttiBefore", value: (r) => r.ttiBefore, firstDir: "asc" },
+  { key: "ttiRaw", value: (r) => r.ttiRaw, firstDir: "asc" },
+  { key: "ttiDelta", value: (r) => r.ttiDelta, firstDir: "asc" },
+];
+
+// The table had no sort of its own before, so the default is the thing the
+// board is for: the biggest LCP improvement first.
+const DEFAULT_SORT = { key: "lcpDelta", dir: "asc" };
+
+const COLUMN_COUNT = 7;
 
 const fmt = new Intl.NumberFormat("en-US");
 
@@ -48,10 +71,33 @@ const VS_BASELINE = `
   </svg>
   <span>vs. baseline</span>`;
 
+/** The pre-loop measurement: same figures as the after column, muted. */
+function baselineCell(ms) {
+  var td = document.createElement("td");
+  td.className = "num-cell num-cell--before";
+  td.textContent = typeof ms === "number" ? fmt.format(ms) : "\u2013";
+  return td;
+}
+
+/** The measurement the loop ended on, with the staircase glyph beside it. */
+function measuredCell(ms) {
+  var td = document.createElement("td");
+  td.className = "num-cell";
+  td.innerHTML = typeof ms === "number" ? escapeHtml(fmt.format(ms)) + SPARK : "\u2013";
+  return td;
+}
+
+function deltaCell(pct) {
+  var td = document.createElement("td");
+  td.className = "delta-cell";
+  td.innerHTML = typeof pct === "number" ? DOWN_ARROW + escapeHtml(pct + "%") : "\u2013";
+  return td;
+}
+
 class SiteLeaderboardPage extends HTMLElement {
   constructor() {
     super();
-    this.state = { mode: "cold", q: "", page: 1 };
+    this.state = { mode: "cold", q: "", page: 1, sort: DEFAULT_SORT };
     this.rows = [];
   }
 
@@ -128,13 +174,7 @@ class SiteLeaderboardPage extends HTMLElement {
             <div class="table-scroll">
               <table class="data-table" id="sites-table">
                 <thead>
-                  <tr>
-                    <th scope="col">Site</th>
-                    <th scope="col">LCP (Raw)<span class="unit">ms</span></th>
-                    <th scope="col">LCP Improvement<span class="unit">vs. baseline</span></th>
-                    <th scope="col">TTI (Raw)<span class="unit">ms</span></th>
-                    <th scope="col">TTI Improvement<span class="unit">vs. baseline</span></th>
-                  </tr>
+                  <tr id="sites-head"></tr>
                 </thead>
                 <tbody id="sites-tbody"></tbody>
               </table>
@@ -157,6 +197,7 @@ class SiteLeaderboardPage extends HTMLElement {
       tests: this.querySelector("#card-tests"),
       updated: this.querySelector("#card-updated"),
       updatedSub: this.querySelector("#card-updated-sub"),
+      head: this.querySelector("#sites-head"),
       tbody: this.querySelector("#sites-tbody"),
       showing: this.querySelector("#sites-showing"),
       pagination: this.querySelector("#sites-pagination"),
@@ -166,11 +207,22 @@ class SiteLeaderboardPage extends HTMLElement {
     };
 
     this.bind();
+    this.renderHead();
     this.load();
   }
 
   bind() {
     var self = this;
+
+    // One listener on the header row, so re-rendering the <th>s cannot leave
+    // stale handlers behind.
+    this.els.head.addEventListener("click", function (event) {
+      var button = event.target.closest("[data-sort-key]");
+      if (!button) return;
+      self.state.sort = nextSort(self.state.sort, SORT_COLUMNS, button.dataset.sortKey);
+      self.state.page = 1;
+      self.renderTable();
+    });
 
     this.els.segmented.forEach(function (btn) {
       btn.addEventListener("click", function () {
@@ -193,12 +245,34 @@ class SiteLeaderboardPage extends HTMLElement {
     this.els.exportBtn.addEventListener("click", function () {
       downloadCsv(
         "makefaster-sites-" + self.state.mode + ".csv",
-        ["name", "url", "mode", "lcp_ms", "lcp_improvement_pct", "tti_ms", "tti_improvement_pct", "tests", "measured_at"],
+        [
+          "name", "url", "mode",
+          "lcp_before_ms", "lcp_after_ms", "lcp_improvement_pct",
+          "tti_before_ms", "tti_after_ms", "tti_improvement_pct",
+          "tests", "measured_at",
+        ],
         self.filtered().map(function (r) {
-          return [r.name, r.url, r.mode, r.lcpRaw, r.lcpDelta, r.ttiRaw, r.ttiDelta, r.tests, r.measuredAt];
+          return [
+            r.name, r.url, r.mode,
+            r.lcpBefore, r.lcpRaw, r.lcpDelta,
+            r.ttiBefore, r.ttiRaw, r.ttiDelta,
+            r.tests, r.measuredAt,
+          ];
         })
       );
     });
+  }
+
+  renderHead() {
+    var sort = this.state.sort;
+    this.els.head.innerHTML =
+      '<th scope="col">Site</th>' +
+      sortableHeader(sort, "lcpBefore", "LCP Before", "ms") +
+      sortableHeader(sort, "lcpRaw", "LCP After", "ms") +
+      sortableHeader(sort, "lcpDelta", "LCP Improvement", "vs. baseline") +
+      sortableHeader(sort, "ttiBefore", "TTI Before", "ms") +
+      sortableHeader(sort, "ttiRaw", "TTI After", "ms") +
+      sortableHeader(sort, "ttiDelta", "TTI Improvement", "vs. baseline");
   }
 
   load() {
@@ -210,7 +284,7 @@ class SiteLeaderboardPage extends HTMLElement {
       })
       .catch(function (err) {
         self.els.tbody.innerHTML =
-          '<tr><td colspan="5" style="text-align:center;color:var(--red);padding:34px 16px;">' +
+          '<tr><td colspan="' + COLUMN_COUNT + '" style="text-align:center;color:var(--red);padding:34px 16px;">' +
           "Could not load /data/sites.json &mdash; start the server with ./run.sh (see README). " +
           "(" + escapeHtml(err.message) + ")</td></tr>";
       });
@@ -219,7 +293,7 @@ class SiteLeaderboardPage extends HTMLElement {
   filtered() {
     var q = this.state.q.trim().toLowerCase();
     var mode = this.state.mode;
-    return this.rows.filter(function (r) {
+    var matching = this.rows.filter(function (r) {
       if (r.mode !== mode) return false;
       if (!q) return true;
       return (
@@ -227,6 +301,7 @@ class SiteLeaderboardPage extends HTMLElement {
         (r.name || "").toLowerCase().indexOf(q) !== -1
       );
     });
+    return sortRows(matching, SORT_COLUMNS, this.state.sort);
   }
 
   renderCards() {
@@ -303,6 +378,7 @@ class SiteLeaderboardPage extends HTMLElement {
 
   renderTable() {
     var self = this;
+    this.renderHead();
     var data = this.filtered();
     var pageCount = Math.max(1, Math.ceil(data.length / PER_PAGE));
     if (this.state.page > pageCount) this.state.page = pageCount;
@@ -317,7 +393,8 @@ class SiteLeaderboardPage extends HTMLElement {
         ? "No sites match your search."
         : "No sites yet \u2014 the board fills up as loops submit their results.";
       empty.innerHTML =
-        '<td colspan="5" style="text-align:center;color:var(--muted);padding:34px 16px;">' + message + "</td>";
+        '<td colspan="' + COLUMN_COUNT + '" style="text-align:center;color:var(--muted);padding:34px 16px;">' +
+        message + "</td>";
       this.els.tbody.appendChild(empty);
     }
 
@@ -339,25 +416,12 @@ class SiteLeaderboardPage extends HTMLElement {
       siteTd.appendChild(cell);
       tr.appendChild(siteTd);
 
-      var lcpTd = document.createElement("td");
-      lcpTd.className = "num-cell";
-      lcpTd.innerHTML = escapeHtml(fmt.format(r.lcpRaw)) + SPARK;
-      tr.appendChild(lcpTd);
-
-      var lcpDeltaTd = document.createElement("td");
-      lcpDeltaTd.className = "delta-cell";
-      lcpDeltaTd.innerHTML = DOWN_ARROW + escapeHtml(r.lcpDelta + "%");
-      tr.appendChild(lcpDeltaTd);
-
-      var ttiTd = document.createElement("td");
-      ttiTd.className = "num-cell";
-      ttiTd.innerHTML = escapeHtml(fmt.format(r.ttiRaw)) + SPARK;
-      tr.appendChild(ttiTd);
-
-      var ttiDeltaTd = document.createElement("td");
-      ttiDeltaTd.className = "delta-cell";
-      ttiDeltaTd.innerHTML = DOWN_ARROW + escapeHtml(r.ttiDelta + "%");
-      tr.appendChild(ttiDeltaTd);
+      tr.appendChild(baselineCell(r.lcpBefore));
+      tr.appendChild(measuredCell(r.lcpRaw));
+      tr.appendChild(deltaCell(r.lcpDelta));
+      tr.appendChild(baselineCell(r.ttiBefore));
+      tr.appendChild(measuredCell(r.ttiRaw));
+      tr.appendChild(deltaCell(r.ttiDelta));
 
       self.els.tbody.appendChild(tr);
     });

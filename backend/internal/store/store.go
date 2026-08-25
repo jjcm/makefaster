@@ -36,7 +36,7 @@ func New(db *sql.DB) *Store {
 // keep their committed order and submissions land at the end.
 func (s *Store) Sites(ctx context.Context) ([]leaderboard.SiteRow, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT name, url, favicon, lcp_raw, lcp_delta, tti_raw, tti_delta, mode, tests, measured_at
+		SELECT name, url, favicon, lcp_before, lcp_raw, lcp_delta, tti_before, tti_raw, tti_delta, mode, tests, measured_at
 		FROM sites
 		ORDER BY id`)
 	if err != nil {
@@ -48,8 +48,8 @@ func (s *Store) Sites(ctx context.Context) ([]leaderboard.SiteRow, error) {
 	for rows.Next() {
 		var row leaderboard.SiteRow
 		var measuredAt time.Time
-		if err := rows.Scan(&row.Name, &row.URL, &row.Favicon, &row.LCPRaw, &row.LCPDelta,
-			&row.TTIRaw, &row.TTIDelta, &row.Mode, &row.Tests, &measuredAt); err != nil {
+		if err := rows.Scan(&row.Name, &row.URL, &row.Favicon, &row.LCPBefore, &row.LCPRaw, &row.LCPDelta,
+			&row.TTIBefore, &row.TTIRaw, &row.TTIDelta, &row.Mode, &row.Tests, &measuredAt); err != nil {
 			return nil, fmt.Errorf("scan site: %w", err)
 		}
 		row.MeasuredAt = leaderboard.FormatTimestamp(measuredAt)
@@ -97,11 +97,11 @@ func (s *Store) UpsertSite(ctx context.Context, submission leaderboard.SiteSubmi
 	var current leaderboard.SiteRow
 	var measuredAt time.Time
 	err = tx.QueryRowContext(ctx, `
-		SELECT name, url, favicon, lcp_raw, lcp_delta, tti_raw, tti_delta, mode, tests, measured_at
+		SELECT name, url, favicon, lcp_before, lcp_raw, lcp_delta, tti_before, tti_raw, tti_delta, mode, tests, measured_at
 		FROM sites WHERE url = ? AND mode = ? FOR UPDATE`,
 		submission.URL, submission.Mode,
-	).Scan(&current.Name, &current.URL, &current.Favicon, &current.LCPRaw, &current.LCPDelta,
-		&current.TTIRaw, &current.TTIDelta, &current.Mode, &current.Tests, &measuredAt)
+	).Scan(&current.Name, &current.URL, &current.Favicon, &current.LCPBefore, &current.LCPRaw, &current.LCPDelta,
+		&current.TTIBefore, &current.TTIRaw, &current.TTIDelta, &current.Mode, &current.Tests, &measuredAt)
 	switch {
 	case err == nil:
 		current.MeasuredAt = leaderboard.FormatTimestamp(measuredAt)
@@ -117,17 +117,17 @@ func (s *Store) UpsertSite(ctx context.Context, submission leaderboard.SiteSubmi
 
 	if created {
 		_, err = tx.ExecContext(ctx, `
-			INSERT INTO sites (name, url, favicon, lcp_raw, lcp_delta, tti_raw, tti_delta, mode, tests, measured_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			row.Name, row.URL, row.Favicon, row.LCPRaw, row.LCPDelta, row.TTIRaw, row.TTIDelta,
-			row.Mode, row.Tests, now.UTC())
+			INSERT INTO sites (name, url, favicon, lcp_before, lcp_raw, lcp_delta, tti_before, tti_raw, tti_delta, mode, tests, measured_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			row.Name, row.URL, row.Favicon, row.LCPBefore, row.LCPRaw, row.LCPDelta,
+			row.TTIBefore, row.TTIRaw, row.TTIDelta, row.Mode, row.Tests, now.UTC())
 	} else {
 		_, err = tx.ExecContext(ctx, `
-			UPDATE sites SET name = ?, favicon = ?, lcp_raw = ?, lcp_delta = ?, tti_raw = ?,
-				tti_delta = ?, tests = ?, measured_at = ?
+			UPDATE sites SET name = ?, favicon = ?, lcp_before = ?, lcp_raw = ?, lcp_delta = ?,
+				tti_before = ?, tti_raw = ?, tti_delta = ?, tests = ?, measured_at = ?
 			WHERE url = ? AND mode = ?`,
-			row.Name, row.Favicon, row.LCPRaw, row.LCPDelta, row.TTIRaw, row.TTIDelta,
-			row.Tests, now.UTC(), row.URL, row.Mode)
+			row.Name, row.Favicon, row.LCPBefore, row.LCPRaw, row.LCPDelta,
+			row.TTIBefore, row.TTIRaw, row.TTIDelta, row.Tests, now.UTC(), row.URL, row.Mode)
 	}
 	if err != nil {
 		return leaderboard.SiteRow{}, false, fmt.Errorf("write site: %w", err)
@@ -193,8 +193,8 @@ func (s *Store) seedSites(ctx context.Context, seedDir string) error {
 	defer tx.Rollback()
 
 	statement, err := tx.PrepareContext(ctx, `
-		INSERT INTO sites (name, url, favicon, lcp_raw, lcp_delta, tti_raw, tti_delta, mode, tests, measured_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		INSERT INTO sites (name, url, favicon, lcp_before, lcp_raw, lcp_delta, tti_before, tti_raw, tti_delta, mode, tests, measured_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return fmt.Errorf("prepare seed sites: %w", err)
 	}
@@ -205,8 +205,17 @@ func (s *Store) seedSites(ctx context.Context, seedDir string) error {
 		if err != nil {
 			measuredAt = time.Now()
 		}
-		if _, err := statement.ExecContext(ctx, row.Name, row.URL, row.Favicon, row.LCPRaw, row.LCPDelta,
-			row.TTIRaw, row.TTIDelta, row.Mode, row.Tests, measuredAt.UTC()); err != nil {
+		// A seed file written before the board stored both ends of a run only
+		// carries the after value and the delta; recover the baseline from them
+		// rather than seeding a zero.
+		if row.LCPBefore == 0 {
+			row.LCPBefore = leaderboard.BaselineFromDelta(row.LCPRaw, row.LCPDelta)
+		}
+		if row.TTIBefore == 0 {
+			row.TTIBefore = leaderboard.BaselineFromDelta(row.TTIRaw, row.TTIDelta)
+		}
+		if _, err := statement.ExecContext(ctx, row.Name, row.URL, row.Favicon, row.LCPBefore, row.LCPRaw,
+			row.LCPDelta, row.TTIBefore, row.TTIRaw, row.TTIDelta, row.Mode, row.Tests, measuredAt.UTC()); err != nil {
 			return fmt.Errorf("seed site %q: %w", row.URL, err)
 		}
 	}

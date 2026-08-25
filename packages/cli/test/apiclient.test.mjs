@@ -42,8 +42,10 @@ test("buildSitePayloads produces one payload per complete mode with computed del
   assert.deepEqual(cold, {
     url: "example.com",
     mode: "cold",
+    lcpBefore: 2400,
     lcpRaw: 1750,
     lcpDelta: -27.1, // (1750-2400)/2400
+    ttiBefore: 3900,
     ttiRaw: 3050,
     ttiDelta: -21.8,
     name: "Example",
@@ -51,6 +53,8 @@ test("buildSitePayloads produces one payload per complete mode with computed del
   });
   const warm = payloads.find((p) => p.mode === "warm");
   assert.equal(warm.lcpDelta, -29.1);
+  assert.equal(warm.lcpBefore, 1100);
+  assert.equal(warm.ttiBefore, 1700);
 });
 
 test("buildSitePayloads skips incomplete modes and zero baselines", () => {
