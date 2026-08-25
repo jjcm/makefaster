@@ -70,7 +70,7 @@ func TestValidateSitePayloadReportsEveryProblem(t *testing.T) {
 	_, err := leaderboard.ValidateSitePayload(decode(t, `{
 		"url": "localhost", "mode": "hot",
 		"lcpRaw": "1400", "lcpDelta": -900, "ttiRaw": 900000, "ttiDelta": null,
-		"favicon": "ftp://example.com/icon.ico", "name": ""
+		"favicon": "ftp://example.com/icon.ico", "name": "", "prUrl": "not-a-url"
 	}`))
 	got := validationErrors(t, err)
 	joined := strings.Join(got, "\n")
@@ -84,6 +84,7 @@ func TestValidateSitePayloadReportsEveryProblem(t *testing.T) {
 		"ttiDelta must be a percentage between -100 and 500 (negative = faster)",
 		"favicon must be an http(s) URL when provided",
 		"name must be a short string when provided",
+		"prUrl must be an http(s) URL when provided",
 	} {
 		if !strings.Contains(joined, expected) {
 			t.Errorf("missing error %q; got:\n%s", expected, joined)
@@ -95,13 +96,90 @@ func TestValidateSitePayloadTreatsOmittedOptionalsAsAbsent(t *testing.T) {
 	submission, err := leaderboard.ValidateSitePayload(decode(t, `{
 		"url": "example.com", "mode": "cold",
 		"lcpRaw": 1000, "lcpDelta": -1, "ttiRaw": 2000, "ttiDelta": -2,
-		"name": null, "favicon": null
+		"name": null, "favicon": null, "prUrl": null
 	}`))
 	if err != nil {
 		t.Fatalf("explicit nulls should be treated as omitted, got %v", err)
 	}
-	if submission.Name != "" || submission.Favicon != "" {
+	if submission.Name != "" || submission.Favicon != "" || submission.PRURL != "" {
 		t.Errorf("expected empty optionals, got %+v", submission)
+	}
+}
+
+// The pull request the run was opened as, under either spelling: `prUrl` is
+// what the schema documents, `pr` is what a submitter is just as likely to
+// write, and losing the link over the field name would be a poor trade.
+func TestValidateSitePayloadReadsThePullRequestUnderEitherName(t *testing.T) {
+	metrics := `"url": "example.com", "mode": "cold", "lcpRaw": 1000, "lcpDelta": -1, "ttiRaw": 2000, "ttiDelta": -2`
+	for _, field := range []string{"prUrl", "pr"} {
+		body := "{" + metrics + `, "` + field + `": "  https://github.com/jjcm/immich/pull/1  "}`
+		submission, err := leaderboard.ValidateSitePayload(decode(t, body))
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", field, err)
+		}
+		if submission.PRURL != "https://github.com/jjcm/immich/pull/1" {
+			t.Errorf("%s: got %q", field, submission.PRURL)
+		}
+	}
+
+	// prUrl wins when both are present, and neither may be a javascript: URL.
+	both := "{" + metrics + `, "prUrl": "https://github.com/jjcm/immich/pull/2", "pr": "https://github.com/jjcm/immich/pull/9"}`
+	submission, err := leaderboard.ValidateSitePayload(decode(t, both))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if submission.PRURL != "https://github.com/jjcm/immich/pull/2" {
+		t.Errorf("prUrl should win over pr, got %q", submission.PRURL)
+	}
+	if _, err := leaderboard.ValidateSitePayload(decode(t, "{"+metrics+`, "pr": "javascript:alert(1)"}`)); err == nil {
+		t.Error("a javascript: URL must be rejected")
+	}
+}
+
+// The two keep percentages are complementary, so either one implies the other,
+// both zero means no split was reported, and a pair that does not add up is a
+// broken client rather than a number to guess at.
+func TestValidateSitePayloadReadsTheKeepSplit(t *testing.T) {
+	metrics := `"url": "example.com", "mode": "cold", "lcpRaw": 1000, "lcpDelta": -1, "ttiRaw": 2000, "ttiDelta": -2`
+	cases := []struct {
+		fields               string
+		generic, siteSpecifc int
+	}{
+		{`, "genericKeepPct": 80, "siteSpecificKeepPct": 20`, 80, 20},
+		{`, "genericKeepPct": 80`, 80, 20},
+		{`, "siteSpecificKeepPct": 20`, 80, 20},
+		// All keeps site-specific: the pair still adds to 100.
+		{`, "genericKeepPct": 0, "siteSpecificKeepPct": 100`, 0, 100},
+		{`, "siteSpecificKeepPct": 100`, 0, 100},
+		// Nothing kept, and nothing said: no split either way.
+		{`, "genericKeepPct": 0, "siteSpecificKeepPct": 0`, 0, 0},
+		{`, "genericKeepPct": 0`, 0, 0},
+		{`, "genericKeepPct": null, "siteSpecificKeepPct": null`, 0, 0},
+		{``, 0, 0},
+		// Percentages are whole numbers on the board.
+		{`, "genericKeepPct": 66.6`, 67, 33},
+	}
+	for _, test := range cases {
+		submission, err := leaderboard.ValidateSitePayload(decode(t, "{"+metrics+test.fields+"}"))
+		if err != nil {
+			t.Errorf("%s: unexpected error: %v", test.fields, err)
+			continue
+		}
+		if submission.GenericKeepPct != test.generic || submission.SiteSpecificKeepPct != test.siteSpecifc {
+			t.Errorf("%s: got %d/%d, want %d/%d", test.fields,
+				submission.GenericKeepPct, submission.SiteSpecificKeepPct, test.generic, test.siteSpecifc)
+		}
+	}
+
+	for _, broken := range []string{
+		`, "genericKeepPct": 80, "siteSpecificKeepPct": 80`,
+		`, "genericKeepPct": 140`,
+		`, "genericKeepPct": -10`,
+		`, "genericKeepPct": "80"`,
+	} {
+		if _, err := leaderboard.ValidateSitePayload(decode(t, "{"+metrics+broken+"}")); err == nil {
+			t.Errorf("%s should have been rejected", broken)
+		}
 	}
 }
 

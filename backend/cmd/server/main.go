@@ -16,6 +16,7 @@ import (
 	"makefaster/internal/db"
 	"makefaster/internal/embedding"
 	httpapi "makefaster/internal/http"
+	"makefaster/internal/inference"
 	"makefaster/internal/store"
 )
 
@@ -57,19 +58,30 @@ func main() {
 		ThresholdOverride: cfg.Embeddings.ThresholdOverride,
 	}, logger)
 
+	// The hosted model proxy. Booting without a credential is supported: the
+	// endpoint answers 503 and the CLI's other providers are unaffected.
+	models := inference.New(cfg.Inference.APIKey, cfg.Inference.BaseURL, logger)
+	if !models.Available() {
+		logger.Warn("OPENROUTER_API_KEY is not set; the hosted `makefaster` provider will answer 503",
+			"model", models.Model())
+	}
+
 	server := httpapi.NewServer(httpapi.Options{
 		Store:       leaderboards,
 		Embedder:    embedder,
 		Threshold:   threshold,
 		FrontendDir: cfg.FrontendDir,
 		Logger:      logger,
+		Inference:   models,
 	})
 
 	logger.Info("makefaster server listening",
 		"addr", cfg.Addr(),
 		"frontend", cfg.FrontendDir,
 		"embedder", embedder.ID(),
-		"threshold", threshold)
+		"threshold", threshold,
+		"hostedModel", models.Model(),
+		"hostedModelAvailable", models.Available())
 
 	httpServer := &http.Server{
 		Addr:              cfg.Addr(),

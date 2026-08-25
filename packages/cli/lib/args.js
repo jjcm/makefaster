@@ -6,16 +6,22 @@
 export const USAGE = `Usage: npx makefaster [dir] [options]
 
 Runs the makefaster autoresearch loop against the site in [dir] (default:
-the current directory), driving an agent CLI you already have installed and
-are signed into. The agent CLI runs hidden: makefaster keeps the terminal, so
-its native interface never draws and it never asks you to log in, trust the
-workspace, or approve individual tools.
+the current directory), driving either makefaster's own hosted model or an
+agent CLI you already have installed and are signed into. An agent CLI runs
+hidden: makefaster keeps the terminal, so its native interface never draws and
+it never asks you to log in, trust the workspace, or approve individual tools.
 
 Options:
-  --cli <cursor|claude|codex>   Skip the provider picker and use this agent CLI
+  --cli <makefaster|cursor|claude|codex>
+                                Skip the picker and use this agent.
+                                "makefaster" is the hosted default: the model
+                                runs through makefaster.dev, so it needs no
+                                local CLI, no account, and no API key of yours.
   --model <id>                  Skip the model picker and use this model id
                                 (the ids come from the chosen CLI's own model
-                                list; see the picker for the ranked five)
+                                list; see the picker for the ranked five).
+                                Unused by --cli makefaster, whose model is
+                                pinned by the server.
   --url <example.com>           The public URL of the site (used for the
                                 site-leaderboard submission)
   --api <base>                  Leaderboard API base
@@ -36,6 +42,9 @@ Environment:
 `;
 
 const CLI_ALIASES = new Map([
+  // The hosted provider answers to both names: it is makefaster's own option,
+  // and it is OpenRouter underneath.
+  ["makefaster", "makefaster"], ["openrouter", "makefaster"], ["hosted", "makefaster"],
   ["cursor", "cursor"], ["cursor-agent", "cursor"], ["agent", "cursor"],
   ["claude", "claude"], ["claude-code", "claude"], ["claudecode", "claude"],
   ["codex", "codex"],
@@ -76,7 +85,7 @@ export function parseArgs(argv) {
         if (value !== null) {
           i++;
           const key = CLI_ALIASES.get(value.toLowerCase());
-          if (!key) errors.push(`--cli must be one of: cursor, claude, codex (got "${value}")`);
+          if (!key) errors.push(`--cli must be one of: makefaster, cursor, claude, codex (got "${value}")`);
           else args.cli = key;
         }
         break;

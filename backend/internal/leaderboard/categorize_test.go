@@ -336,6 +336,151 @@ func TestTitleCaseCategoryName(t *testing.T) {
 	}
 }
 
+// A created row is described as a technique, not as the run that created it.
+func TestCreatedCategoryStoresAGenericDescription(t *testing.T) {
+	categories := fixtureCategories(t)
+	embedder, threshold := localEmbedder()
+
+	updated, results := leaderboard.Categorize([]leaderboard.Improvement{{
+		Name:        "Merge Small JS Chunks",
+		Description: "Combine tiny boot-time JS chunks in src/build/chunks.ts so request count stops dominating LCP",
+		DeltaMs:     -1262, HasDeltaMs: true,
+		DeltaPct: -15.6, HasDeltaPct: true,
+	}}, categories, embedder, threshold)
+
+	if results[0].Action != "created" {
+		t.Fatalf("expected a created category, got %+v", results[0])
+	}
+	created := findCategory(t, updated, results[0].Category)
+	if markers := leaderboard.SiteSpecificMarkers(created.Description); len(markers) > 0 {
+		t.Errorf("created %q with a site-specific description (%v): %q", created.Name, markers, created.Description)
+	}
+	if want := "Combine tiny boot-time JS chunks so request count stops dominating LCP"; created.Description != want {
+		t.Errorf("description: got %q, want %q", created.Description, want)
+	}
+}
+
+// When the submitted description is a changelog all the way through, the row is
+// created with the placeholder rather than with one repo's story.
+func TestCreatedCategoryNeverStoresTheSubmittedChangelog(t *testing.T) {
+	categories := fixtureCategories(t)
+	embedder, threshold := localEmbedder()
+	changelog := "The client build emitted ~270 chunks (~125 fetched at boot) over HTTP/1.1, so request count dominated"
+
+	updated, results := leaderboard.Categorize([]leaderboard.Improvement{{
+		Name:        "Merge Small JS Chunks",
+		Description: changelog,
+		DeltaPct:    -15.6, HasDeltaPct: true,
+	}}, categories, embedder, threshold)
+
+	created := findCategory(t, updated, results[0].Category)
+	if created.Description == changelog {
+		t.Errorf("the submitted changelog was stored verbatim: %q", created.Description)
+	}
+	if want := "Community-submitted: Merge Small JS Chunks"; created.Description != want {
+		t.Errorf("description: got %q, want %q", created.Description, want)
+	}
+}
+
+// A submission folding into a technique the board already names is described by
+// the catalog, whatever the submitter wrote about their own repo.
+func TestCreatedCanonicalCategoryUsesTheCatalogDescription(t *testing.T) {
+	embedder, threshold := localEmbedder()
+
+	updated, results := leaderboard.Categorize([]leaderboard.Improvement{{
+		Name:        "Trim Preloaded Font Payload",
+		Description: "Playfair Display cut from 4 weights x 2 styles to the single 400-italic actually used",
+		DeltaPct:    -20.9, HasDeltaPct: true,
+	}}, nil, embedder, threshold)
+
+	if results[0].Category != "Reduce Font Payload" {
+		t.Fatalf("expected the font-payload technique, got %+v", results[0])
+	}
+	created := findCategory(t, updated, "Reduce Font Payload")
+	if want := leaderboard.CatalogDescription("Reduce Font Payload"); created.Description != want {
+		t.Errorf("description: got %q, want %q", created.Description, want)
+	}
+}
+
+// A fold is one more site reporting the same technique, so the row keeps the
+// description it already had. Letting the newest submission overwrite it would
+// put whichever repo submitted last on the public board.
+func TestFoldKeepsAGenericDescription(t *testing.T) {
+	categories := fixtureCategories(t)
+	embedder, threshold := localEmbedder()
+	before := findCategory(t, categories, "Lazy-Load Components")
+
+	updated, results := leaderboard.Categorize([]leaderboard.Improvement{{
+		Name:        "Lazy-load Mermaid Runtime",
+		Description: "Removed a manualChunks pin that hoisted the ~170KB mermaid-to-excalidraw chunk onto the boot path",
+		DeltaPct:    -9.6, HasDeltaPct: true,
+	}}, categories, embedder, threshold)
+
+	if results[0].Action != "matched" || results[0].Category != "Lazy-Load Components" {
+		t.Fatalf("expected a fold into Lazy-Load Components, got %+v", results[0])
+	}
+	after := findCategory(t, updated, "Lazy-Load Components")
+	if after.Description != before.Description {
+		t.Errorf("description was clobbered: got %q, want %q", after.Description, before.Description)
+	}
+}
+
+// The one case where a fold does rewrite the row: rows created before this rule
+// still describe one repo, and the next submission upgrades them to the
+// technique. It is an upgrade in one direction only — never generic to
+// site-specific.
+func TestFoldUpgradesASiteSpecificDescription(t *testing.T) {
+	embedder, threshold := localEmbedder()
+	categories := []leaderboard.Category{{
+		Rank:        1,
+		Name:        "Reduce Font Payload",
+		Description: "Playfair Display cut from 4 weights x 2 styles to the single 400-italic actually used",
+		Count:       4, AvgImprovementMs: -6410, AvgImprovementPct: -31.6, Icon: "default",
+	}}
+
+	updated, results := leaderboard.Categorize([]leaderboard.Improvement{{
+		Name:        "Trim the Preloaded Font Payload",
+		Description: "Dropped the two font families the entry route never paints",
+		DeltaMs:     -200, HasDeltaMs: true,
+		DeltaPct: -10, HasDeltaPct: true,
+	}}, categories, embedder, threshold)
+
+	if results[0].Action != "matched" {
+		t.Fatalf("expected a fold, got %+v", results[0])
+	}
+	after := findCategory(t, updated, "Reduce Font Payload")
+	if want := leaderboard.CatalogDescription("Reduce Font Payload"); after.Description != want {
+		t.Errorf("description: got %q, want %q", after.Description, want)
+	}
+	if after.Count != 5 {
+		t.Errorf("count: got %d, want 5", after.Count)
+	}
+	if after.AvgImprovementMs != -5168 || after.AvgImprovementPct != -27.3 {
+		t.Errorf("the fold moved more than the description: %+v", after)
+	}
+}
+
+// A site-specific row stays as it is when the submission has nothing generic to
+// offer: a placeholder would be worse than the changelog it replaced.
+func TestFoldLeavesASiteSpecificDescriptionWhenThereIsNoBetterOne(t *testing.T) {
+	embedder, threshold := localEmbedder()
+	original := "The realtime client used the default transport order, adding round-trips before first data"
+	categories := []leaderboard.Category{{
+		Rank: 1, Name: "WebSocket-first Realtime Transport", Description: original,
+		Count: 1, AvgImprovementMs: -476, AvgImprovementPct: -14.6, Icon: "default",
+	}}
+
+	updated, _ := leaderboard.Categorize([]leaderboard.Improvement{{
+		Name:        "WebSocket-first Realtime Transport",
+		Description: "Switched socket.io to a websocket-only transport in src/realtime/client.ts",
+		DeltaPct:    -12, HasDeltaPct: true,
+	}}, categories, embedder, threshold)
+
+	if after := findCategory(t, updated, "WebSocket-first Realtime Transport"); after.Description != original {
+		t.Errorf("description: got %q, want it left at %q", after.Description, original)
+	}
+}
+
 func TestCreatedCategoryFallsBackToACommunityDescription(t *testing.T) {
 	categories := fixtureCategories(t)
 	embedder, threshold := localEmbedder()

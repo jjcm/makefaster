@@ -56,10 +56,15 @@ function postJson(path, payload) {
 
 /**
  * Site leaderboard rows.
- * Row shape: { name, url, favicon, lcpRaw, lcpDelta, ttiRaw, ttiDelta,
- *              mode, tests, measuredAt }
+ * Row shape: { name, url, favicon, lcpBefore, lcpRaw, lcpDelta, ttiBefore,
+ *              ttiRaw, ttiDelta, mode, tests, measuredAt, prUrl?,
+ *              genericKeepPct?, siteSpecificKeepPct? }
  * lcpDelta / ttiDelta are percentages vs. baseline (negative = faster).
  * mode is "cold" or "warm".
+ * prUrl is the pull request the run was opened as, absent when there is none.
+ * genericKeepPct / siteSpecificKeepPct split the run's kept changes into
+ * reusable techniques and site-specific findings; both are absent when the run
+ * reported no split.
  */
 export function getSites() {
   return getJson(DATA_PATHS.sites);
@@ -99,8 +104,17 @@ function assertFields(payload, fields, label) {
  *   lcpDelta: -34,                  // required — % vs. baseline (negative = faster)
  *   ttiRaw:   2945,                 // required — ms
  *   ttiDelta: -29,                  // required — % vs. baseline
- *   name:     "Example",            // optional display name
- *   favicon:  "https://..."         // optional favicon URL
+ *   name:     "Example",            // optional display name — the product's
+ *                                   //   own name, not the deployment's
+ *   favicon:  "https://...",        // optional favicon URL
+ *   prUrl:    "https://github.com/owner/repo/pull/1", // optional; also read
+ *                                   //   as `pr`. The site name on the board
+ *                                   //   links to it.
+ *   genericKeepPct:      80,        // optional — % of the run's kept changes
+ *   siteSpecificKeepPct: 20         //   that were reusable techniques vs.
+ *                                   //   findings about this site only. Either
+ *                                   //   one implies the other; both 0 (or
+ *                                   //   omitted) means no split was reported.
  * }
  *
  * Resolves the server response: { ok, created, row }.

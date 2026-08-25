@@ -210,10 +210,26 @@ function pushSite(site, { hero = false } = {}) {
   const tests = ri(3, 10);
   const measuredAt = hero && site.url === "google.com" ? "2024-05-12T14:15:00Z" : randomMeasuredAt();
 
+  // Most runs are opened as a pull request and the board links the row to it,
+  // but not all of them are, so a synthetic board has to exercise both.
+  const prUrl = rand() < 0.75
+    ? `https://github.com/jjcm/${site.url.split(".")[0]}/pull/${ri(1, 9)}`
+    : "";
+
+  // Same for the generic/site-specific split: real boards carry rows that
+  // reported one and rows submitted before the fields existed.
+  const splits = [100, 80, 75, 67, 60, 50, 40, 33];
+  const genericKeepPct = rand() < 0.8 ? splits[ri(0, splits.length - 1)] : null;
+  const keepSplit = genericKeepPct === null
+    ? {}
+    : { genericKeepPct, siteSpecificKeepPct: 100 - genericKeepPct };
+
   for (const [mode, m] of [["cold", cold], ["warm", warm]]) {
     rows.push({
       name: site.name,
       url: site.url,
+      ...(prUrl ? { prUrl } : {}),
+      ...keepSplit,
       favicon: favicon(site.url),
       lcpRaw: m.lcpRaw,
       lcpDelta: m.lcpDelta,

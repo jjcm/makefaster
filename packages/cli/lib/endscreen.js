@@ -97,6 +97,14 @@ async function askSiteSubmission({ results, state, paths }) {
   console.log(`  ${bold("2. Submit stats to the Site leaderboard?")}`);
   console.log(dim("     Your site's URL and favicon will be displayed publicly, with its"));
   console.log(dim("     measured LCP/TTI and the improvement since baseline."));
+  // Everything else the row will carry, so the answer is informed.
+  const preview = payloadsPreview[0];
+  if (preview.prUrl) {
+    console.log(dim(`     The row's name will link to ${preview.prUrl}.`));
+  }
+  if (typeof preview.genericKeepPct === "number") {
+    console.log(dim(`     It will also show that ${preview.genericKeepPct}% of what you kept was reusable technique.`));
+  }
   const wants = await confirm("     Submit site stats?", { def: false });
   if (!wants) return;
 

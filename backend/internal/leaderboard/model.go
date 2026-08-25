@@ -26,19 +26,33 @@ func FormatTimestamp(t time.Time) string {
 // change — "raw" rather than "after" because that is the key the API has
 // always used. The deltas are the percent change between the two, negative =
 // faster.
+//
+// PRURL is the pull request the loop's changes were opened as, so a reader can
+// go straight from the number to the diff that produced it. It is omitted from
+// the JSON when there is none: most rows predate the field, and a row without a
+// PR must not render a dead link.
+//
+// GenericKeepPct / SiteSpecificKeepPct split the run's kept changes into the
+// ones that were reusable techniques and the ones that were only ever going to
+// matter to this site. They sum to 100 when the run kept anything, and are both
+// zero when it kept nothing or when the submission predates the fields — the
+// same "nothing to show" either way, so both are omitted from the JSON.
 type SiteRow struct {
-	Name       string  `json:"name"`
-	URL        string  `json:"url"`
-	Favicon    string  `json:"favicon"`
-	LCPBefore  int     `json:"lcpBefore"`
-	LCPRaw     int     `json:"lcpRaw"`
-	LCPDelta   float64 `json:"lcpDelta"`
-	TTIBefore  int     `json:"ttiBefore"`
-	TTIRaw     int     `json:"ttiRaw"`
-	TTIDelta   float64 `json:"ttiDelta"`
-	Mode       string  `json:"mode"`
-	Tests      int     `json:"tests"`
-	MeasuredAt string  `json:"measuredAt"`
+	Name                string  `json:"name"`
+	URL                 string  `json:"url"`
+	PRURL               string  `json:"prUrl,omitempty"`
+	GenericKeepPct      int     `json:"genericKeepPct,omitempty"`
+	SiteSpecificKeepPct int     `json:"siteSpecificKeepPct,omitempty"`
+	Favicon             string  `json:"favicon"`
+	LCPBefore           int     `json:"lcpBefore"`
+	LCPRaw              int     `json:"lcpRaw"`
+	LCPDelta            float64 `json:"lcpDelta"`
+	TTIBefore           int     `json:"ttiBefore"`
+	TTIRaw              int     `json:"ttiRaw"`
+	TTIDelta            float64 `json:"ttiDelta"`
+	Mode                string  `json:"mode"`
+	Tests               int     `json:"tests"`
+	MeasuredAt          string  `json:"measuredAt"`
 }
 
 // Category is one row of the improvement leaderboard.
@@ -55,18 +69,23 @@ type Category struct {
 // SiteSubmission is a validated POST /api/submit-site body. Name and Favicon
 // are empty when the submitter left them out, in which case the upsert derives
 // them. LCPBefore/TTIBefore are the measured baseline when the submitter sent
-// one and the value recovered from the delta when it did not.
+// one and the value recovered from the delta when it did not. PRURL is empty
+// unless the submitter linked the pull request the run produced, and the two
+// keep percentages are zero unless the submitter reported the split.
 type SiteSubmission struct {
-	URL       string
-	Mode      string
-	LCPBefore int
-	LCPRaw    int
-	LCPDelta  float64
-	TTIBefore int
-	TTIRaw    int
-	TTIDelta  float64
-	Name      string
-	Favicon   string
+	URL                 string
+	Mode                string
+	LCPBefore           int
+	LCPRaw              int
+	LCPDelta            float64
+	TTIBefore           int
+	TTIRaw              int
+	TTIDelta            float64
+	Name                string
+	Favicon             string
+	PRURL               string
+	GenericKeepPct      int
+	SiteSpecificKeepPct int
 }
 
 // Improvement is one validated entry of POST /api/submit-improvements. The

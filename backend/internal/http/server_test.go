@@ -350,6 +350,143 @@ func TestSubmitSiteInsertsThenUpsertsAndSurvivesRestart(t *testing.T) {
 	}
 }
 
+// A row's identity: the product's name, and the pull request the run was opened
+// as. The name a submitter sends describes their deployment, so it is reduced
+// on the way in; the PR link is stored as sent and served back so the board can
+// link to it. A submission without one leaves the key off the row entirely.
+func TestSubmitSiteStoresTheProductNameAndPullRequest(t *testing.T) {
+	base := boot(t, freshDatabase(t)).URL
+
+	var submitted struct {
+		Row leaderboard.SiteRow `json:"row"`
+	}
+	body := `{"url":"https://n8n.example.com","mode":"cold","name":"n8n (self-hosted editor, jjcm/n8n fork)",
+		"prUrl":"https://github.com/jjcm/n8n/pull/1",
+		"lcpBefore":2000,"lcpRaw":1400,"lcpDelta":-30,"ttiBefore":3000,"ttiRaw":2300,"ttiDelta":-23}`
+	if status := postJSON(t, base+"/api/submit-site", body, &submitted); status != http.StatusCreated {
+		t.Fatalf("submit = %d, want 201", status)
+	}
+	if submitted.Row.Name != "n8n" {
+		t.Errorf("name: got %q, want %q", submitted.Row.Name, "n8n")
+	}
+	if submitted.Row.PRURL != "https://github.com/jjcm/n8n/pull/1" {
+		t.Errorf("prUrl: got %q", submitted.Row.PRURL)
+	}
+
+	// The board the SPA reads carries both, and a row with no pull request does
+	// not carry an empty key for one.
+	plain := `{"url":"https://plain.example.com","mode":"cold","lcpRaw":1000,"lcpDelta":-10,"ttiRaw":2000,"ttiDelta":-10}`
+	if status := postJSON(t, base+"/api/submit-site", plain, nil); status != http.StatusCreated {
+		t.Fatalf("submit without a PR = %d, want 201", status)
+	}
+
+	res, err := http.Get(base + "/data/sites.json")
+	if err != nil {
+		t.Fatalf("GET /data/sites.json: %v", err)
+	}
+	payload, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+
+	var rows []leaderboard.SiteRow
+	if err := json.Unmarshal(payload, &rows); err != nil {
+		t.Fatalf("decode sites: %v", err)
+	}
+	for _, row := range rows {
+		switch row.URL {
+		case "n8n.example.com":
+			if row.Name != "n8n" || row.PRURL != "https://github.com/jjcm/n8n/pull/1" {
+				t.Errorf("the board lost the row's identity: %+v", row)
+			}
+		case "plain.example.com":
+			if row.PRURL != "" {
+				t.Errorf("a row with no pull request got one: %q", row.PRURL)
+			}
+		}
+	}
+	if strings.Contains(string(payload), `"prUrl":""`) {
+		t.Errorf("a row without a pull request must omit the key, got %s", payload)
+	}
+}
+
+// How the run's keeps split between reusable techniques and site-specific
+// findings, round-tripped. A row that reported no split must carry no split, so
+// the board can tell "half the keeps were one-offs" apart from "we don't know".
+func TestSubmitSiteStoresTheKeepSplit(t *testing.T) {
+	base := boot(t, freshDatabase(t)).URL
+
+	var submitted struct {
+		Row leaderboard.SiteRow `json:"row"`
+	}
+	body := `{"url":"https://split.example.com","mode":"cold","genericKeepPct":80,"siteSpecificKeepPct":20,
+		"lcpRaw":1400,"lcpDelta":-30,"ttiRaw":2300,"ttiDelta":-23}`
+	if status := postJSON(t, base+"/api/submit-site", body, &submitted); status != http.StatusCreated {
+		t.Fatalf("submit = %d, want 201", status)
+	}
+	if submitted.Row.GenericKeepPct != 80 || submitted.Row.SiteSpecificKeepPct != 20 {
+		t.Errorf("split: got %d/%d, want 80/20", submitted.Row.GenericKeepPct, submitted.Row.SiteSpecificKeepPct)
+	}
+
+	// Only one side of the split is enough, since they are complementary.
+	var implied struct {
+		Row leaderboard.SiteRow `json:"row"`
+	}
+	oneSided := `{"url":"https://implied.example.com","mode":"cold","genericKeepPct":25,
+		"lcpRaw":1400,"lcpDelta":-30,"ttiRaw":2300,"ttiDelta":-23}`
+	if status := postJSON(t, base+"/api/submit-site", oneSided, &implied); status != http.StatusCreated {
+		t.Fatalf("one-sided submit = %d, want 201", status)
+	}
+	if implied.Row.GenericKeepPct != 25 || implied.Row.SiteSpecificKeepPct != 75 {
+		t.Errorf("split: got %d/%d, want 25/75", implied.Row.GenericKeepPct, implied.Row.SiteSpecificKeepPct)
+	}
+
+	// A submission from before the fields existed reports nothing, and the board
+	// says nothing.
+	silent := `{"url":"https://silent.example.com","mode":"cold","lcpRaw":1400,"lcpDelta":-30,"ttiRaw":2300,"ttiDelta":-23}`
+	if status := postJSON(t, base+"/api/submit-site", silent, nil); status != http.StatusCreated {
+		t.Fatalf("silent submit = %d, want 201", status)
+	}
+
+	res, err := http.Get(base + "/data/sites.json")
+	if err != nil {
+		t.Fatalf("GET /data/sites.json: %v", err)
+	}
+	payload, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+
+	var rows []leaderboard.SiteRow
+	if err := json.Unmarshal(payload, &rows); err != nil {
+		t.Fatalf("decode sites: %v", err)
+	}
+	for _, row := range rows {
+		switch row.URL {
+		case "split.example.com":
+			if row.GenericKeepPct != 80 || row.SiteSpecificKeepPct != 20 {
+				t.Errorf("the board lost the split: %+v", row)
+			}
+		case "silent.example.com":
+			if row.GenericKeepPct != 0 || row.SiteSpecificKeepPct != 0 {
+				t.Errorf("a row with no split got one: %+v", row)
+			}
+		}
+	}
+	if strings.Contains(string(payload), `"genericKeepPct":0`) {
+		t.Errorf("a row with no split must omit the keys, got %s", payload)
+	}
+
+	// An inconsistent pair is a broken client, and says so.
+	var rejected struct {
+		Errors []string `json:"errors"`
+	}
+	broken := `{"url":"https://broken.example.com","mode":"cold","genericKeepPct":80,"siteSpecificKeepPct":80,
+		"lcpRaw":1400,"lcpDelta":-30,"ttiRaw":2300,"ttiDelta":-23}`
+	if status := postJSON(t, base+"/api/submit-site", broken, &rejected); status != http.StatusBadRequest {
+		t.Fatalf("inconsistent split = %d, want 400", status)
+	}
+	if !strings.Contains(strings.Join(rejected.Errors, " "), "add up to 100") {
+		t.Errorf("expected an explanation of the split, got %v", rejected.Errors)
+	}
+}
+
 // The site board shows before and after for both metrics, so both have to
 // survive a round trip — including for a client that only sends the after
 // value and the delta, which is every CLI released before lcpBefore existed.

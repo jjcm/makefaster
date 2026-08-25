@@ -37,20 +37,50 @@ const COLUMN_COUNT = 7;
 
 const fmt = new Intl.NumberFormat("en-US");
 
-// Fixed ascending staircase glyph, as drawn beside raw values in the design.
-const SPARK =
-  '<svg class="spark" width="27" height="14" viewBox="0 0 27 14" fill="currentColor" aria-hidden="true">' +
-  ["3", "4.5", "6", "7.5", "9", "10.5", "12", "13.5"]
-    .map(function (h, i) {
-      var height = parseFloat(h);
-      return '<rect x="' + i * 3.4 + '" y="' + (14 - height) + '" width="2.1" height="' + height + '"/>';
-    })
-    .join("") +
-  "</svg>";
-
 const DOWN_ARROW =
   '<svg class="icon" width="10" height="12" viewBox="0 0 10 12" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">' +
   '<path d="M5 0v10M1 7l4 4 4-4"/></svg>';
+
+// Marks the site name as a link to the pull request the run was opened as.
+const PR_GLYPH =
+  '<svg class="icon pr-glyph" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">' +
+  '<circle cx="3" cy="2.6" r="1.5"/><circle cx="3" cy="9.4" r="1.5"/><path d="M3 4.1v3.8"/>' +
+  '<circle cx="9" cy="9.4" r="1.5"/><path d="M9 7.9V4.6a2 2 0 0 0-2-2H5.4"/><path d="M6.7 1.3 5.4 2.6l1.3 1.3"/></svg>';
+
+// Only an http(s) link is ever rendered, so a stored value that is not one
+// cannot become a javascript: URL on a public page.
+const HTTP_URL = /^https?:\/\//i;
+
+/**
+ * How the run's kept changes split between reusable techniques and findings
+ * that only mattered to this site. A row with no split — every submission from
+ * before the board recorded one, and every run that kept nothing — shows
+ * nothing at all, rather than an honest-looking 0%.
+ */
+function keepSplitMarkup(row) {
+  var generic = row.genericKeepPct;
+  var siteSpecific = row.siteSpecificKeepPct;
+  if (typeof generic !== "number" || generic + (siteSpecific || 0) <= 0) return "";
+  return (
+    '<div class="site-keeps" title="' + generic + '% of the kept changes were reusable techniques, ' +
+    (100 - generic) + '% were specific to this site">' + generic + "% generic</div>"
+  );
+}
+
+/**
+ * The site's name, linked to the pull request that made it faster when the row
+ * has one. Rows submitted before the board stored that link — and any run that
+ * was not opened as a PR — stay plain text rather than pointing nowhere.
+ */
+function siteNameMarkup(row) {
+  var name = escapeHtml(row.name || row.url);
+  var pr = row.prUrl || row.pr;
+  if (!pr || !HTTP_URL.test(pr)) return '<div class="site-name">' + name + "</div>";
+  return (
+    '<div class="site-name"><a href="' + escapeHtml(pr) + '" target="_blank" rel="noopener noreferrer"' +
+    ' title="View the pull request that made this site faster">' + name + PR_GLYPH + "</a></div>"
+  );
+}
 
 /** One stat card of the summary row; `sub` is the caption under the value. */
 function statCard(id, label, glyph, sub) {
@@ -71,20 +101,22 @@ const VS_BASELINE = `
   </svg>
   <span>vs. baseline</span>`;
 
-/** The pre-loop measurement: same figures as the after column, muted. */
-function baselineCell(ms) {
+/** One measured time in milliseconds, or an en dash when it was not measured. */
+function timeCell(ms, className) {
   var td = document.createElement("td");
-  td.className = "num-cell num-cell--before";
+  td.className = className;
   td.textContent = typeof ms === "number" ? fmt.format(ms) : "\u2013";
   return td;
 }
 
-/** The measurement the loop ended on, with the staircase glyph beside it. */
+/** The pre-loop measurement: same figures as the after column, muted. */
+function baselineCell(ms) {
+  return timeCell(ms, "num-cell num-cell--before");
+}
+
+/** The measurement the loop ended on. */
 function measuredCell(ms) {
-  var td = document.createElement("td");
-  td.className = "num-cell";
-  td.innerHTML = typeof ms === "number" ? escapeHtml(fmt.format(ms)) + SPARK : "\u2013";
-  return td;
+  return timeCell(ms, "num-cell");
 }
 
 function deltaCell(pct) {
@@ -246,16 +278,18 @@ class SiteLeaderboardPage extends HTMLElement {
       downloadCsv(
         "makefaster-sites-" + self.state.mode + ".csv",
         [
-          "name", "url", "mode",
+          "name", "url", "pr_url", "mode",
           "lcp_before_ms", "lcp_after_ms", "lcp_improvement_pct",
           "tti_before_ms", "tti_after_ms", "tti_improvement_pct",
+          "generic_keep_pct", "site_specific_keep_pct",
           "tests", "measured_at",
         ],
         self.filtered().map(function (r) {
           return [
-            r.name, r.url, r.mode,
+            r.name, r.url, r.prUrl || r.pr || "", r.mode,
             r.lcpBefore, r.lcpRaw, r.lcpDelta,
             r.ttiBefore, r.ttiRaw, r.ttiDelta,
+            r.genericKeepPct, r.siteSpecificKeepPct,
             r.tests, r.measuredAt,
           ];
         })
@@ -407,11 +441,7 @@ class SiteLeaderboardPage extends HTMLElement {
       cell.appendChild(self.faviconCell(r));
       var meta = document.createElement("div");
       meta.innerHTML =
-        '<div class="site-name">' +
-        escapeHtml(r.name || r.url) +
-        '</div><div class="site-url">' +
-        escapeHtml(r.url) +
-        "</div>";
+        siteNameMarkup(r) + '<div class="site-url">' + escapeHtml(r.url) + "</div>" + keepSplitMarkup(r);
       cell.appendChild(meta);
       siteTd.appendChild(cell);
       tr.appendChild(siteTd);

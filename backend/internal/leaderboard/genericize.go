@@ -21,7 +21,8 @@ package leaderboard
 // "lazy-load the chat side pane" are one technique, not two.
 //
 // The naming rule this enforces is documented for submitters in
-// packages/skill/SKILL.md ("Naming an improvement").
+// packages/skill/SKILL.md ("Naming and describing an improvement"), which is
+// also where the matching rule for descriptions lives — see describe.go.
 
 import (
 	"regexp"

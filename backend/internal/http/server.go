@@ -7,9 +7,12 @@
 //	GET  /                          the SPA shell (and every unknown app route)
 //	GET  /data/sites.json           live site-leaderboard rows
 //	GET  /data/improvements.json    live improvement categories
-//	GET  /api/health                { ok, embedder, threshold }
+//	GET  /api/health                { ok, embedder, threshold, inference }
 //	POST /api/submit-site           one measurement run for one site
 //	POST /api/submit-improvements    anonymous improvements, embedding-matched
+//	POST /api/openrouter/v1/chat/completions
+//	                                the subsidized model proxy the CLI's
+//	                                `makefaster` provider runs on
 package httpapi
 
 import (
@@ -22,6 +25,7 @@ import (
 	"time"
 
 	"makefaster/internal/embedding"
+	"makefaster/internal/inference"
 	"makefaster/internal/leaderboard"
 	"makefaster/internal/store"
 )
@@ -30,6 +34,16 @@ const (
 	bodyLimitBytes    = 256 * 1024
 	rateLimitWindow   = time.Minute
 	rateLimitMaxPosts = 60
+
+	// The inference proxy spends real money per request, so it gets its own,
+	// tighter budget. A tool-calling loop makes a handful of calls a minute
+	// when it is working and none while a build runs, so this is generous for
+	// one honest session and useless for anyone trying to resell the endpoint.
+	inferenceRateLimitMax = 30
+
+	// The proxy's own body ceiling. A conversation with a few files in it is
+	// large, but not this large, and the request is read into memory.
+	inferenceBodyLimitBytes = 1024 * 1024
 )
 
 type Server struct {
@@ -38,8 +52,10 @@ type Server struct {
 	threshold   float64
 	frontendDir string
 	logger      *slog.Logger
+	inference   *inference.Proxy
 
-	limiter *rateLimiter
+	limiter          *rateLimiter
+	inferenceLimiter *rateLimiter
 
 	// writes serializes both write endpoints: one request folds into the
 	// leaderboard at a time, so two concurrent submissions cannot lose each
@@ -53,6 +69,10 @@ type Options struct {
 	Threshold   float64
 	FrontendDir string
 	Logger      *slog.Logger
+
+	// Inference is optional: a nil proxy answers the inference route with the
+	// same 503 an unconfigured credential does.
+	Inference *inference.Proxy
 }
 
 func NewServer(opts Options) *Server {
@@ -60,13 +80,19 @@ func NewServer(opts Options) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	proxy := opts.Inference
+	if proxy == nil {
+		proxy = inference.New("", "", logger)
+	}
 	return &Server{
-		store:       opts.Store,
-		embedder:    opts.Embedder,
-		threshold:   opts.Threshold,
-		frontendDir: opts.FrontendDir,
-		logger:      logger,
-		limiter:     newRateLimiter(),
+		store:            opts.Store,
+		embedder:         opts.Embedder,
+		threshold:        opts.Threshold,
+		frontendDir:      opts.FrontendDir,
+		logger:           logger,
+		inference:        proxy,
+		limiter:          newRateLimiter(rateLimitMaxPosts),
+		inferenceLimiter: newRateLimiter(inferenceRateLimitMax),
 	}
 }
 
@@ -92,6 +118,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 			s.handleSubmitSite(w, r)
 		case "/api/submit-improvements":
 			s.handleSubmitImprovements(w, r)
+		case "/api/openrouter/v1/chat/completions":
+			s.handleInferenceChat(w, r)
 		default:
 			s.writeJSON(w, http.StatusNotFound, errorBody("unknown endpoint"))
 		}
@@ -109,6 +137,10 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 				OK:        true,
 				Embedder:  s.embedder.ID(),
 				Threshold: s.threshold,
+				Inference: inferenceHealth{
+					Available: s.inference.Available(),
+					Model:     s.inference.Model(),
+				},
 			})
 		default:
 			s.serveStatic(w, r)
@@ -120,9 +152,18 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 }
 
 type healthBody struct {
-	OK        bool    `json:"ok"`
-	Embedder  string  `json:"embedder"`
-	Threshold float64 `json:"threshold"`
+	OK        bool            `json:"ok"`
+	Embedder  string          `json:"embedder"`
+	Threshold float64         `json:"threshold"`
+	Inference inferenceHealth `json:"inference"`
+}
+
+// inferenceHealth tells the CLI whether the hosted provider will work here
+// before it starts a run. It reports whether a credential is configured — never
+// anything about the credential itself.
+type inferenceHealth struct {
+	Available bool   `json:"available"`
+	Model     string `json:"model"`
 }
 
 func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
@@ -246,14 +287,19 @@ func (s *Server) foldImprovements(r *http.Request, improvements []leaderboard.Im
 	return results, nil
 }
 
-// readBody reads at most 256 KB of request body, answering 413 beyond that.
+// readBody reads at most 256 KB of request body, answering 413 beyond that —
+// except on the inference route, whose payload is a whole conversation.
 func (s *Server) readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, bodyLimitBytes+1))
+	limit := bodyLimitBytes
+	if r.URL.Path == "/api/openrouter/v1/chat/completions" {
+		limit = inferenceBodyLimitBytes
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, int64(limit)+1))
 	if err != nil {
 		s.writeJSON(w, http.StatusBadRequest, errorBody("could not read request body"))
 		return nil, false
 	}
-	if len(body) > bodyLimitBytes {
+	if len(body) > limit {
 		s.writeJSON(w, http.StatusRequestEntityTooLarge, errorBody("payload too large"))
 		return nil, false
 	}
@@ -300,10 +346,11 @@ func clientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// rateLimiter caps POSTs per IP per window. Buckets are dropped wholesale past
-// a crude memory ceiling rather than swept individually.
+// rateLimiter caps requests per IP per window. Buckets are dropped wholesale
+// past a crude memory ceiling rather than swept individually.
 type rateLimiter struct {
 	mu      sync.Mutex
+	max     int
 	buckets map[string]*bucket
 }
 
@@ -312,8 +359,8 @@ type bucket struct {
 	count       int
 }
 
-func newRateLimiter() *rateLimiter {
-	return &rateLimiter{buckets: map[string]*bucket{}}
+func newRateLimiter(max int) *rateLimiter {
+	return &rateLimiter{max: max, buckets: map[string]*bucket{}}
 }
 
 func (l *rateLimiter) allow(ip string) bool {
@@ -330,5 +377,5 @@ func (l *rateLimiter) allow(ip string) bool {
 	if len(l.buckets) > 10_000 {
 		l.buckets = map[string]*bucket{}
 	}
-	return existing.count <= rateLimitMaxPosts
+	return existing.count <= l.max
 }

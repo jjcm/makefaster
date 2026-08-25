@@ -3,8 +3,11 @@ package httpapi_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"math"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pressly/goose/v3"
@@ -199,7 +202,10 @@ func TestRenameMigrationFoldsTheLiveBoardOntoGenericNames(t *testing.T) {
 			t.Errorf("%q kept the wrong numbers: got %+v, want count=%d ms=%d pct=%v",
 				generic, row, was.Count, was.AvgImprovementMs, was.AvgImprovementPct)
 		}
-		if row.Description != was.Description {
+		// The rename keeps whatever the row said; the description backfill that
+		// follows it (migration 00004) replaces the ones it recognizes with the
+		// technique blurb. Anything else means a row lost its text.
+		if row.Description != was.Description && row.Description != leaderboard.CatalogDescription(generic) {
 			t.Errorf("%q lost its description: got %q", generic, row.Description)
 		}
 	}
@@ -282,6 +288,366 @@ func TestBeforeMetricsMigrationBackfillsFromTheRecordedDelta(t *testing.T) {
 			t.Errorf("%s lost its after values: %+v", row.url, got)
 		}
 	}
+}
+
+// liveDescriptions is backend/testdata/category_descriptions.json: every row of
+// GET /data/improvements.json with the changelog it carried and the technique
+// blurb migration 00004 replaces it with.
+func liveDescriptions(t *testing.T) []struct {
+	Name string `json:"name"`
+	Was  string `json:"was"`
+	Now  string `json:"now"`
+} {
+	t.Helper()
+	path := filepath.Join("..", "..", "testdata", "category_descriptions.json")
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var rows []struct {
+		Name string `json:"name"`
+		Was  string `json:"was"`
+		Now  string `json:"now"`
+	}
+	if err := json.Unmarshal(contents, &rows); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	return rows
+}
+
+// The live board, rewritten. Names, counts and averages are what the board
+// earned across every site that reported the technique, so the backfill must
+// touch nothing but the description.
+func TestDescriptionMigrationRewritesTheLiveBoard(t *testing.T) {
+	pool := databaseAtVersion(t, 3)
+	rows := liveDescriptions(t)
+
+	before := make([]leaderboard.Category, 0, len(rows))
+	for i, row := range rows {
+		before = append(before, leaderboard.Category{
+			Rank: i + 1, Name: row.Name, Description: row.Was,
+			Count: len(rows) - i, AvgImprovementMs: -100 * (i + 1),
+			AvgImprovementPct: -1.5 * float64(i+1), Icon: "default",
+		})
+	}
+	if err := store.New(pool).ReplaceCategories(context.Background(), before); err != nil {
+		t.Fatalf("load the pre-backfill board: %v", err)
+	}
+
+	if err := db.Migrate(pool, migrationsDir); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	after, err := store.New(pool).Categories(context.Background())
+	if err != nil {
+		t.Fatalf("read categories: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("expected %d categories, got %d", len(before), len(after))
+	}
+
+	byName := categoriesByName(after)
+	for i, row := range rows {
+		got, found := byName[row.Name]
+		if !found {
+			t.Errorf("%q is missing after the backfill", row.Name)
+			continue
+		}
+		if got.Description != row.Now {
+			t.Errorf("%q description: got %q, want %q", row.Name, got.Description, row.Now)
+		}
+		if got != (leaderboard.Category{
+			Rank: got.Rank, Name: before[i].Name, Description: row.Now,
+			Count: before[i].Count, AvgImprovementMs: before[i].AvgImprovementMs,
+			AvgImprovementPct: before[i].AvgImprovementPct, Icon: before[i].Icon,
+		}) {
+			t.Errorf("%q changed more than its description: got %+v, want %+v", row.Name, got, before[i])
+		}
+	}
+}
+
+// A row someone has already described as a technique is not rewritten, so
+// re-running the backfill — or running it after ingest has upgraded a row — is
+// a no-op.
+func TestDescriptionMigrationLeavesGenericDescriptionsAlone(t *testing.T) {
+	pool := databaseAtVersion(t, 3)
+	leaderboards := store.New(pool)
+
+	original := []leaderboard.Category{
+		{Rank: 1, Name: "Lazy-Load Components", Description: "Load panes, modals, and editors only when opened", Count: 118, AvgImprovementMs: -59, AvgImprovementPct: -4.9, Icon: "default"},
+		{Rank: 2, Name: "Enable Gzip Compression", Description: leaderboard.CatalogDescription("Enable Gzip Compression"), Count: 4, AvgImprovementMs: -2995, AvgImprovementPct: -33.9, Icon: "default"},
+		{Rank: 3, Name: "Image Optimization", Description: "Compress and resize images", Count: 312, AvgImprovementMs: -265, AvgImprovementPct: -17.3, Icon: "image"},
+	}
+	if err := leaderboards.ReplaceCategories(context.Background(), original); err != nil {
+		t.Fatalf("load board: %v", err)
+	}
+	if err := db.Migrate(pool, migrationsDir); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	after, err := leaderboards.Categories(context.Background())
+	if err != nil {
+		t.Fatalf("read categories: %v", err)
+	}
+	for i, category := range after {
+		if category != original[i] {
+			t.Errorf("row %d changed: got %+v, want %+v", i, category, original[i])
+		}
+	}
+}
+
+// Rolling the backfill back puts the original text on every row that still
+// carries the blurb it wrote.
+func TestDescriptionMigrationRollsBack(t *testing.T) {
+	pool := databaseAtVersion(t, 3)
+	rows := liveDescriptions(t)
+
+	before := make([]leaderboard.Category, 0, len(rows))
+	for i, row := range rows {
+		before = append(before, leaderboard.Category{
+			Rank: i + 1, Name: row.Name, Description: row.Was, Count: 1, Icon: "default",
+		})
+	}
+	if err := store.New(pool).ReplaceCategories(context.Background(), before); err != nil {
+		t.Fatalf("load the pre-backfill board: %v", err)
+	}
+	if err := db.Migrate(pool, migrationsDir); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	// Down *to* the migration before the backfill, so this stays a test of the
+	// backfill's own rollback as later migrations are added on top.
+	if err := goose.DownTo(pool, migrationsDir, 3); err != nil {
+		t.Fatalf("roll back: %v", err)
+	}
+
+	byName := categoriesByName(mustCategories(t, pool))
+	for _, row := range rows {
+		if got := byName[row.Name].Description; got != strings.TrimSpace(row.Was) {
+			t.Errorf("%q was not restored: got %q, want %q", row.Name, got, strings.TrimSpace(row.Was))
+		}
+	}
+}
+
+// liveSiteNames is backend/testdata/site_names.json: every row of GET
+// /data/sites.json with the name it was submitted under, the product name
+// migration 00006 replaces it with, and the pull request that run was opened
+// as.
+type liveSiteName struct {
+	URL   string `json:"url"`
+	Was   string `json:"was"`
+	Now   string `json:"now"`
+	PRURL string `json:"prUrl"`
+}
+
+func liveSiteNames(t *testing.T) []liveSiteName {
+	t.Helper()
+	path := filepath.Join("..", "..", "testdata", "site_names.json")
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var rows []liveSiteName
+	if err := json.Unmarshal(contents, &rows); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	return rows
+}
+
+// The live site board, renamed to products and linked to the pull requests each
+// run produced. Both the cold and the warm row of a site move together, and
+// nothing but the name and the link changes.
+func TestSiteNameMigrationRenamesTheLiveBoardAndLinksThePullRequests(t *testing.T) {
+	pool := databaseAtVersion(t, 5)
+	rows := liveSiteNames(t)
+
+	before := make([]leaderboard.SiteRow, 0, len(rows)*2)
+	for i, row := range rows {
+		for _, mode := range []string{"cold", "warm"} {
+			before = append(before, leaderboard.SiteRow{
+				Name: row.Was, URL: row.URL, Favicon: "https://" + row.URL + "/favicon.ico",
+				LCPBefore: 2000 + i, LCPRaw: 1000 + i, LCPDelta: -40,
+				TTIBefore: 3000 + i, TTIRaw: 2000 + i, TTIDelta: -30,
+				Mode: mode, Tests: i + 1,
+			})
+		}
+	}
+	insertSites(t, pool, before)
+
+	if err := db.Migrate(pool, migrationsDir); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	after, err := store.New(pool).Sites(context.Background())
+	if err != nil {
+		t.Fatalf("read sites: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("expected %d rows, got %d", len(before), len(after))
+	}
+
+	byKey := make(map[string]leaderboard.SiteRow, len(after))
+	for _, row := range after {
+		byKey[row.URL+"/"+row.Mode] = row
+	}
+	for i, row := range rows {
+		for _, mode := range []string{"cold", "warm"} {
+			got, found := byKey[row.URL+"/"+mode]
+			if !found {
+				t.Errorf("%s (%s) is missing after the migration", row.URL, mode)
+				continue
+			}
+			if got.Name != row.Now {
+				t.Errorf("%s name: got %q, want %q", row.URL, got.Name, row.Now)
+			}
+			if got.PRURL != row.PRURL {
+				t.Errorf("%s prUrl: got %q, want %q", row.URL, got.PRURL, row.PRURL)
+			}
+			if got.LCPRaw != 1000+i || got.TTIRaw != 2000+i || got.Tests != i+1 {
+				t.Errorf("%s changed more than its identity: %+v", row.URL, got)
+			}
+		}
+	}
+}
+
+// A pull request recorded before the migration ran is the submitter's, so the
+// backfill leaves it alone; a row named after a product it does not know is not
+// renamed either.
+func TestSiteNameMigrationDoesNotOverwriteWhatIsAlreadyThere(t *testing.T) {
+	pool := databaseAtVersion(t, 5)
+	original := []leaderboard.SiteRow{
+		{Name: "Immich", URL: "immich.app", PRURL: "https://github.com/jjcm/immich/pull/42", Favicon: "f",
+			LCPBefore: 2000, LCPRaw: 1000, LCPDelta: -50, TTIBefore: 3000, TTIRaw: 2000, TTIDelta: -33,
+			Mode: "cold", Tests: 1},
+		{Name: "Some Other Site", URL: "other.example.com", Favicon: "f",
+			LCPBefore: 2000, LCPRaw: 1000, LCPDelta: -50, TTIBefore: 3000, TTIRaw: 2000, TTIDelta: -33,
+			Mode: "cold", Tests: 1},
+	}
+	insertSites(t, pool, original)
+
+	if err := db.Migrate(pool, migrationsDir); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	after, err := store.New(pool).Sites(context.Background())
+	if err != nil {
+		t.Fatalf("read sites: %v", err)
+	}
+	for i, row := range after {
+		if row.Name != original[i].Name || row.PRURL != original[i].PRURL {
+			t.Errorf("row %d changed: got name=%q pr=%q, want name=%q pr=%q",
+				i, row.Name, row.PRURL, original[i].Name, original[i].PRURL)
+		}
+	}
+}
+
+// A deployment name that lands between this migration being written and
+// deployed is not in the rename table, so the parenthetical pass has to catch
+// it — and must leave a parenthetical that is part of a product's name alone.
+func TestSiteNameMigrationStripsDeploymentParentheticalsItDoesNotKnow(t *testing.T) {
+	pool := databaseAtVersion(t, 5)
+	insertSites(t, pool, []leaderboard.SiteRow{
+		{Name: "Grafana (self-hosted)", URL: "grafana.example.com", Favicon: "f", Mode: "cold", Tests: 1},
+		{Name: "Gitea (jjcm/gitea fork)", URL: "gitea.example.com", Favicon: "f", Mode: "cold", Tests: 1},
+		{Name: "Cursor (the editor)", URL: "cursor.example.com", Favicon: "f", Mode: "cold", Tests: 1},
+		{Name: "Nextcloud (2024)", URL: "nextcloud.example.com", Favicon: "f", Mode: "cold", Tests: 1},
+	})
+
+	if err := db.Migrate(pool, migrationsDir); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	after, err := store.New(pool).Sites(context.Background())
+	if err != nil {
+		t.Fatalf("read sites: %v", err)
+	}
+	expected := map[string]string{
+		"grafana.example.com":   "Grafana",
+		"gitea.example.com":     "Gitea",
+		"cursor.example.com":    "Cursor",
+		"nextcloud.example.com": "Nextcloud (2024)",
+	}
+	for _, row := range after {
+		if want := expected[row.URL]; row.Name != want {
+			t.Errorf("%s name: got %q, want %q", row.URL, row.Name, want)
+		}
+	}
+}
+
+// Rolling the site backfill back gives every row the name it was submitted
+// under and clears the pull request the backfill wrote.
+func TestSiteNameMigrationRollsBack(t *testing.T) {
+	pool := databaseAtVersion(t, 5)
+	rows := liveSiteNames(t)
+
+	before := make([]leaderboard.SiteRow, 0, len(rows))
+	for _, row := range rows {
+		before = append(before, leaderboard.SiteRow{
+			Name: row.Was, URL: row.URL, Favicon: "f", Mode: "cold", Tests: 1,
+		})
+	}
+	insertSites(t, pool, before)
+
+	if err := db.Migrate(pool, migrationsDir); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if err := goose.DownTo(pool, migrationsDir, 5); err != nil {
+		t.Fatalf("roll back: %v", err)
+	}
+
+	// Read the two columns directly: rolling back past the later migrations
+	// takes their columns with it, and this is a test of migration 00006.
+	after, err := pool.Query("SELECT url, name, pr_url FROM sites")
+	if err != nil {
+		t.Fatalf("read sites: %v", err)
+	}
+	defer after.Close()
+
+	restored := map[string][2]string{}
+	for after.Next() {
+		var url, name, prURL string
+		if err := after.Scan(&url, &name, &prURL); err != nil {
+			t.Fatalf("scan site: %v", err)
+		}
+		restored[url] = [2]string{name, prURL}
+	}
+	if err := after.Err(); err != nil {
+		t.Fatalf("read sites: %v", err)
+	}
+
+	for _, row := range rows {
+		got := restored[row.URL]
+		if got[0] != row.Was {
+			t.Errorf("%s name: got %q, want it restored to %q", row.URL, got[0], row.Was)
+		}
+		if got[1] != "" {
+			t.Errorf("%s kept a pull request the rollback wrote: %q", row.URL, got[1])
+		}
+	}
+}
+
+// insertSites writes rows the way the schema stores them, so a test can set up
+// a board without going through the API.
+func insertSites(t *testing.T, pool *sql.DB, rows []leaderboard.SiteRow) {
+	t.Helper()
+	for _, row := range rows {
+		if _, err := pool.Exec(`
+			INSERT INTO sites (name, url, pr_url, favicon, lcp_before, lcp_raw, lcp_delta,
+				tti_before, tti_raw, tti_delta, mode, tests, measured_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+			row.Name, row.URL, row.PRURL, row.Favicon, row.LCPBefore, row.LCPRaw, row.LCPDelta,
+			row.TTIBefore, row.TTIRaw, row.TTIDelta, row.Mode, row.Tests); err != nil {
+			t.Fatalf("insert %s (%s): %v", row.URL, row.Mode, err)
+		}
+	}
+}
+
+func mustCategories(t *testing.T, pool *sql.DB) []leaderboard.Category {
+	t.Helper()
+	categories, err := store.New(pool).Categories(context.Background())
+	if err != nil {
+		t.Fatalf("read categories: %v", err)
+	}
+	return categories
 }
 
 // Running the rename against a board that holds nothing to rename must be a

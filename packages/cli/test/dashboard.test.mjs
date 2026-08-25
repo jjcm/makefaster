@@ -122,9 +122,9 @@ test("buildDashboard renders all three panels with their real numbers", () => {
     status: "RUNNING",
     updatedAt: "10:42:32",
     log: [
-      { time: "10:42:11", tag: "OBSERVE", text: "identified slow render path: /assets/hero-bg.jpg blocking LCP" },
-      { time: "10:42:12", tag: "HYPOTHESIS", text: "convert hero image to AVIF and preload the hero font" },
-      { time: "10:42:32", tag: "COMPARE", text: "beat the noise floor — kept, new best candidate" },
+      { time: "10:42:11", tag: "CHECKLIST", text: "Walking 50 imported categories in rank order." },
+      { time: "10:42:12", tag: "TRY", text: "Convert hero to AVIF and preload the hero font" },
+      { time: "10:42:32", tag: "RESULT", text: "-260ms / -10.8% on lcp — kept" },
     ],
   }));
 
@@ -136,9 +136,9 @@ test("buildDashboard renders all three panels with their real numbers", () => {
   // Top panel: header context plus the tagged log.
   assert.match(frame, /model: claude-fable-5-max/);
   assert.match(frame, /cli: Cursor Agent \(hidden\)/);
-  assert.match(frame, /10:42:11\s+\[OBSERVE\]\s+identified slow render path/);
-  assert.match(frame, /\[HYPOTHESIS\]/);
-  assert.match(frame, /\[COMPARE\]/);
+  assert.match(frame, /10:42:11\s+\[CHECKLIST\]\s+Walking 50 imported categories/);
+  assert.match(frame, /\[TRY\]/);
+  assert.match(frame, /\[RESULT\]/);
 
   // Middle panel: loop, experiment, status, metrics, comparison table, footer.
   assert.match(frame, /LOOP 003/);
@@ -174,7 +174,7 @@ test("buildDashboard survives an empty session and a half-written file", () => {
 });
 
 test("a long log keeps only what fits, newest last", () => {
-  const log = Array.from({ length: 400 }, (_, i) => ({ time: "00:00:00", tag: "EXECUTE", text: `line ${i}` }));
+  const log = Array.from({ length: 400 }, (_, i) => ({ time: "00:00:00", tag: "TRY", text: `line ${i}` }));
   const frame = text(buildDashboard({ size: { columns: 100, rows: 44 }, results: RESULTS, log }));
   assert.match(frame, /line 399/);
   assert.doesNotMatch(frame, /line 0\b/);

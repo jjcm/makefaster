@@ -28,48 +28,62 @@ npx makefaster            # or: npx github:jjcm/makefaster
 
 What happens:
 
-1. **Detects the agent CLIs you already have** — Cursor Agent
-   (`cursor-agent`/`agent`), Claude Code (`claude`), Codex (`codex`) — via
-   PATH, well-known install locations (`~/.local/bin`, `~/.claude/local`,
-   `~/.cursor/bin`, Homebrew…), and explicit env overrides
-   (`CURSOR_AGENT_EXECUTABLE`, `CLAUDE_CODE_EXECUTABLE` /
-   `BB_CLAUDE_CODE_EXECUTABLE`, `CODEX_EXECUTABLE`). makefaster never bundles
-   or downloads a model; it drives your existing install. If none are found
-   it prints the real installers and exits.
-2. **Asks you to pick** among the CLIs actually found — before anything runs.
+1. **Offers its own hosted model first, then the agent CLIs you already have.**
+   **Makefaster** (`--cli makefaster`) needs nothing installed and no account:
+   the model runs through `makefaster.dev`, which holds the OpenRouter
+   credential and proxies chat completions, so the CLI never sees a key. Its
+   model is pinned server-side to `stealth/ox-alpha`, so there is nothing to
+   pick. Then the local ones, detected via PATH, well-known install locations
+   (`~/.local/bin`, `~/.claude/local`, `~/.cursor/bin`, Homebrew…) and explicit
+   env overrides (`CURSOR_AGENT_EXECUTABLE`, `CLAUDE_CODE_EXECUTABLE` /
+   `BB_CLAUDE_CODE_EXECUTABLE`, `CODEX_EXECUTABLE`): Cursor Agent
+   (`cursor-agent`/`agent`), Claude Code (`claude`), Codex (`codex`).
+   makefaster never bundles or downloads a model.
+2. **Asks you to pick** — the hosted option first and pre-selected, then
+   whichever CLIs were actually found. Before anything runs.
 3. **Asks you to pick a model** — five per provider, ranked by intelligence
-   (see [Model picker](#model-picker)). `--model <id>` skips the picker.
-4. **Reuses the sign-in you already have.** makefaster never runs a `login`,
-   opens a browser, prints a device code, or injects an API key; a signed-out
-   install fails with the CLI's own auth error and makefaster reports it in one
-   line pointing at the native `login` command.
+   (see [Model picker](#model-picker)). `--model <id>` skips the picker, and
+   the hosted provider skips it entirely because its model is pinned.
+4. **Reuses the sign-in you already have.** For a local CLI, makefaster never
+   runs a `login`, opens a browser, prints a device code, or injects an API key;
+   a signed-out install fails with the CLI's own auth error and makefaster
+   reports it in one line pointing at the native `login` command. For the hosted
+   provider there is nothing to sign into — but a deployment with no credential
+   configured is reported before the run starts, not three minutes into it.
 5. **Imports the improvement checklist** — up to the top 50 categories from the
    live leaderboard, falling back to the technique catalog bundled at
    [`packages/cli/data/improvements.json`](packages/cli/data/improvements.json)
-   while the public board is still filling up. Either way it is a guide of
-   likely wins, not a script.
+   while the public board is still filling up. Either way that ranked list is
+   the order the loop works in.
 6. **Runs the agent CLI hidden** with the loop skill
    ([`packages/skill/SKILL.md`](packages/skill/SKILL.md)): profile a
    user-felt metric (Lighthouse if available; cold + warm; median of ≥3 runs),
-   then one hypothesis per iteration — measure, keep if it beats the noise
-   floor, revert otherwise. The other product's interface never draws and never
+   then walk the imported checklist in rank order — one category per iteration,
+   skipping what plainly does not apply — and finish with exactly five
+   hypotheses of the agent's own. Measure each one, keep it if it beats the
+   noise floor, revert otherwise. The other product's interface never draws and never
    prompts you (see [The native CLI stays hidden](#the-native-cli-stays-hidden));
    makefaster shows [its own dashboard](#the-dashboard) instead.
-7. **Stops after 5 consecutive misses** (no serious improvement: ≥5% or
-   ≥20 ms on the north-star metric, and FCP-only wins that regress LCP don't
-   count), then leaves the dashboard and shows the end screen with three
+7. **Stops when the checklist and the five extras are done** — or earlier,
+   after 5 consecutive misses (no serious improvement: ≥5% or ≥20 ms on the
+   north-star metric, and FCP-only wins that regress LCP don't count) — then
+   leaves the dashboard and shows the end screen with three
    questions:
    - **Loop more?** — resets the miss counter and continues.
    - **Submit stats to the Site leaderboard?** — your URL and favicon are
-     displayed publicly with the measured LCP/TTI improvements.
+     displayed publicly with the measured LCP/TTI improvements, and the row
+     links to the pull request the run was opened as when there is one.
    - **Submit anonymous improvements data?** — no URL; category names,
      descriptions, and deltas only. Novel improvements become new categories
      on the improvement leaderboard.
 
 ```text
 Usage: npx makefaster [dir] [options]
-  --cli <cursor|claude|codex>   Skip the provider picker
-  --model <id>                  Skip the model picker
+  --cli <makefaster|cursor|claude|codex>
+                                Skip the picker ("makefaster" = the hosted
+                                model, no local CLI or key needed)
+  --model <id>                  Skip the model picker (unused by --cli
+                                makefaster, whose model is pinned)
   --url <example.com>           Site URL for the leaderboard submission
   --api <base>                  Leaderboard API base (default https://makefaster.dev)
   --improvements <path|url>     Override the checklist source
@@ -78,21 +92,29 @@ Usage: npx makefaster [dir] [options]
 ```
 
 Session state lives in `.makefaster/` in the target repo (auto-excluded from
-git via `.git/info/exclude`). The chosen provider and model are recorded in
-`.makefaster/state.json`.
+git via `.git/info/exclude`): `SKILL.md` and `improvements.json` are what the
+CLI hands the agent, `state.json` records the chosen provider, model and loop
+limits, and the agent writes back `results.json` (the record the CLI reads) and
+`thinking.log` (one tagged line per step, which is what the dashboard shows).
 
 ## The dashboard
 
 While the agent works, makefaster owns the screen: an alternate-screen TUI with
 no dependencies — raw ANSI, three panels, repainted from
-`.makefaster/results.json` and from the hidden agent's event stream.
+`.makefaster/results.json` and `.makefaster/thinking.log`.
 
 ![The makefaster dashboard](docs/dashboard.png)
 
-- **AGENT THINKING** — a timestamped log of the loop's steps (`OBSERVE`,
-  `HYPOTHESIS`, `PLAN`, `EXECUTE`, `TEST`, `RESULT`, `COMPARE`). Tool calls come
-  from the agent's stream; `RESULT` and `COMPARE` come from `results.json`, so
-  they are measurements rather than narration.
+- **AGENT THINKING** — a timestamped line per step of the loop, each one a
+  single tagged sentence: `INITIALIZING`, `TEST`, `CHECKLIST`, `SKIP`, `TRY`,
+  `RESULT`, `EXTRA`, `DONE`. The agent writes them to `.makefaster/thinking.log`
+  as each step begins (the contract is in `packages/skill/SKILL.md`), and
+  `TRY`/`RESULT` lines are also derived from `results.json` so the numbers are
+  measurements rather than narration. The hidden agent's protocol stream feeds
+  this panel **nothing**: it is a tool-call transcript — `working`,
+  `Read File`, `approved bash` — which says the agent is busy without ever
+  saying what it is doing, and it buried the two lines a reader wanted. It is
+  still consumed as the child's heartbeat.
 - **AUTORESEARCH / WEBSITE SPEED** — the loop counter, the current experiment,
   and every metric the session measured (`lcpMs`, `tbtMs`, `fcpMs`, `ttiMs`,
   plus `cls` and `score` when the agent records them) as candidate vs baseline.
@@ -118,8 +140,9 @@ protocol frames into, never your terminal — attaching it is what otherwise mak
 these CLIs decide a human is present and start asking for login, workspace
 trust, and per-tool permission.
 
-| CLI | How makefaster drives it |
+| Agent | How makefaster drives it |
 |---|---|
+| Makefaster (hosted) | no child at all — the loop runs in this process against the server's model proxy, with makefaster's own tools |
 | Cursor Agent | `cursor-agent --model <id> acp` — Agent Client Protocol over stdio |
 | Claude Code | `@anthropic-ai/claude-agent-sdk` `query()`, which owns the CLI pipe itself; print mode is the zero-dependency fallback |
 | Codex | `codex app-server` — JSON-RPC; the model rides `thread/start` |
@@ -130,6 +153,16 @@ belong to other agents — and neither does the app-server. So **makefaster answ
 the child's permission requests itself**: ACP `session/request_permission`,
 Claude's `canUseTool`, and Codex's three `requestApproval` methods. Without that
 a hidden child would block forever on a question with no UI to ask it in.
+
+The hosted provider is the exception to all of it: there is no vendor CLI to
+hide, because there is no vendor CLI. makefaster holds the conversation itself
+([`packages/cli/lib/agents/openrouter.js`](packages/cli/lib/agents/openrouter.js))
+and gives the model a small, bounded toolset
+([`tools.js`](packages/cli/lib/agents/tools.js)): list, read, write, edit, run a
+shell command, and report a step to the dashboard. Every path is scoped to the
+target directory — a path that resolves outside it is refused — every command is
+non-interactive with a timeout, and every result is truncated before it becomes
+prompt. The CLI sends no credential and names no model: both live on the server.
 
 Claude Code is the one provider where a protocol client is a dependency rather
 than a subprocess, so the Agent SDK is an optional peer: if it resolves,
@@ -291,8 +324,9 @@ start empty and grow as loops report results:
 | `GET /data/sites.json` | live site rows, one per site per load mode | `MakefasterAPI.getSites()` |
 | `GET /data/improvements.json` | live ranked categories | `MakefasterAPI.getImprovements()` |
 | `GET /api/health` | `{ ok, embedder, threshold }` | — |
-| `POST /api/submit-site` | `{ url, favicon?, name?, lcpBefore?, lcpRaw, lcpDelta, ttiBefore?, ttiRaw, ttiDelta, mode: cold\|warm }` — upserts the site's row; URL + favicon shown publicly | `MakefasterAPI.submitSite(payload)` |
-| `POST /api/submit-improvements` | `{ improvements: [{ name, description?, deltaMs?, deltaPct? }] }` — anonymous; names are normalized to generic techniques and embedding-matched into categories | `MakefasterAPI.submitImprovements(payload)` |
+| `POST /api/submit-site` | `{ url, favicon?, name?, prUrl?, genericKeepPct?, siteSpecificKeepPct?, lcpBefore?, lcpRaw, lcpDelta, ttiBefore?, ttiRaw, ttiDelta, mode: cold\|warm }` — upserts the site's row; URL + favicon shown publicly, `name` reduced to the product's own name, `prUrl` (or `pr`) linked from it | `MakefasterAPI.submitSite(payload)` |
+| `POST /api/submit-improvements` | `{ improvements: [{ name, description?, deltaMs?, deltaPct? }] }` — anonymous; names and descriptions are normalized to generic techniques and embedding-matched into categories | `MakefasterAPI.submitImprovements(payload)` |
+| `POST /api/openrouter/v1/chat/completions` | OpenAI-compatible chat completions for the CLI's hosted provider, proxied to OpenRouter under the server's own credential | — |
 
 Each metric has both ends of the run: `lcpRaw`/`ttiRaw` are the measurement
 after the last kept change, `lcpBefore`/`ttiBefore` the pre-loop baseline, and
@@ -300,11 +334,59 @@ the deltas the percentage between them, negative = faster. The two `*Before`
 fields are optional — a client that omits them has the baseline recovered from
 the delta (`before = after / (1 + delta/100)`).
 
+A row's name is the **product's**, not the deployment's: submitted names have
+described one person's copy of the product — `Dify Studio (self-hosted)`,
+`n8n (self-hosted editor, jjcm/n8n fork)`, `Langflow (fork)` — so ingest strips
+parentheticals, fork and self-hosted qualifiers, jjcm references, and a trailing
+UI-surface word (`dashboard`, `editor`, `studio`), leaving `Dify`, `n8n` and
+`Langflow`. Matching is whole-word, so `Forkify` and `Editorial` are untouched.
+The rule is documented for submitters in `packages/skill/SKILL.md`.
+
+`prUrl` is the pull request the run's kept changes were opened as. The site
+leaderboard links the row's name to it, so the board can show the diff behind a
+percentage; a row without one is plain text and the key is left off the JSON.
+
+`genericKeepPct` / `siteSpecificKeepPct` say how the run's kept changes divided
+between techniques any site could reuse and findings that could only ever have
+mattered to that product — both are real speedups, but only the first belongs on
+the improvement board, and the CLI submits only those as categories. The two are
+complementary, so sending either one is enough; both zero (or both omitted)
+means no split was reported, and the board then shows none rather than a
+0%. Rows submitted before the fields existed are left blank: the split is not
+recoverable from what was stored.
+
 `POST /api/submit-site` answers `201` when it created the row and `200` when it
 folded a new run into an existing one, both as `{ ok, created, row }`; invalid
 payloads come back as `400 { ok: false, errors: [...] }`. Writes are serialized,
 POSTs are rate limited to 60/minute/IP, bodies are capped at 256 KB, and every
 response carries permissive CORS so the SPA can be hosted anywhere.
+
+### The hosted model proxy
+
+`POST /api/openrouter/v1/chat/completions` is what the CLI's `makefaster`
+provider runs on. It exists so that a machine with none of the three agent CLIs
+installed can still run the loop: the server holds `OPENROUTER_API_KEY`, the CLI
+holds a URL, and chat completions are forwarded on its behalf. **The credential
+never leaves the box** — it is in no response body, no error string and no log
+line, and responses are scrubbed on the way out as a backstop.
+
+Which makes it the one endpoint here that spends money per request, so it is
+deliberately narrow ([`backend/internal/inference`](backend/internal/inference)):
+
+- the **model is pinned** to `stealth/ox-alpha` server-side. Whatever the client
+  sends is discarded, so nobody can spend the credential on a model nobody chose;
+- **`max_tokens` is clamped** (8192) and **streaming is refused**, so one request
+  cannot run away;
+- a request with **no messages is rejected** before it costs anything, as is any
+  `api_key`/`authorization` field a client tries to smuggle upstream;
+- it is **rate limited per IP on its own budget** (30/minute), separate from the
+  leaderboard writes, and the 429 says why;
+- with **no credential configured it answers 503** with the fix, rather than
+  failing obscurely — and `GET /api/health` reports
+  `inference: { available, model }` so the CLI can say so before a run starts.
+
+Set the key at deploy time; there is none in this repo, and the tests use an
+`httptest` upstream and a placeholder string.
 
 ### Embeddings
 
@@ -317,6 +399,18 @@ family into five buckets (components, unseen images, third-party SDKs,
 analytics, data fetches), and maps other known families onto their technique
 name. A name that already matches a category on the board wins over any rule.
 The rule is documented for submitters in `packages/skill/SKILL.md`.
+
+The **description** a row shows goes through the same treatment, because a
+technique name over one repo's changelog — `Reduce Font Payload` / "Playfair
+Display cut from 4 weights x 2 styles…" — tells the next site nothing it can
+act on. A submitted description is read for the things that can only mean one
+repo (module and file names, route paths, CSS declarations, byte sizes and other
+measurements, known product nouns, past-tense changelog voice) and, if any turn
+up, replaced: with the catalog's own line for the technique when the board names
+one, otherwise with the submission minus those tokens, otherwise with a
+placeholder. A fold keeps the row's existing description — a fold is one more
+site reporting the same technique, not a re-titling — and only upgrades it when
+the row still carries a site-specific one.
 
 The normalized name then decides the fold: a category whose name carries the
 same significant word stems folds without consulting the embedder, and anything
@@ -342,8 +436,13 @@ request, so the backend can be switched at any time.
 Row shapes:
 
 ```js
-// site leaderboard — one row per site per load mode
+// site leaderboard — one row per site per load mode.
+// prUrl is the pull request the run was opened as, and is absent when the row
+// has none — the board links the site name to it when it is there. The two keep
+// percentages are absent together when the run reported no split.
 { "name": "Example", "url": "example.com", "favicon": "https://…",
+  "prUrl": "https://github.com/jjcm/example/pull/1",
+  "genericKeepPct": 80, "siteSpecificKeepPct": 20,
   "lcpBefore": 2791, "lcpRaw": 1842, "lcpDelta": -34,
   "ttiBefore": 4148, "ttiRaw": 2945, "ttiDelta": -29,
   "mode": "cold", "tests": 6, "measuredAt": "2024-05-12T14:15:00.000Z" }
@@ -422,11 +521,17 @@ run. Coverage: seed-from-file against a one-site, one-category fixture in
 `backend/internal/http/testdata/seed/`; a fresh migrate against the committed
 (empty) seed leaving both endpoints serving `[]`; `201` then `200` on a repeated
 submission; the board surviving a process restart; the health payload;
-static/SPA fallback and legacy redirects; CORS; and the body cap.
+static/SPA fallback and legacy redirects; CORS; and the body cap. They also run
+the two board migrations against the live rows they were written for: the
+generic-name rename (00002) and the generic-description backfill (00004), the
+latter both forwards and rolled back.
 
 The categorization and embedding tests need a realistic board to match against,
 so they read `backend/testdata/categories.json` — a frozen 50-row fixture that
-is test-only and never served. The embedding tests pin the local match threshold
+is test-only and never served. `backend/testdata/category_descriptions.json` is
+the other half: the description every live row carried before migration 00004
+and the technique blurb that replaced it, which is what keeps the migration, the
+ingest catalog, and the rollback in agreement. The embedding tests pin the local match threshold
 and the exact similarity scores the Node implementation produced against it, so
 the fold-vs-create boundary cannot drift.
 

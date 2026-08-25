@@ -150,3 +150,139 @@ func TestUpsertSiteDerivesDefaultsThenCountsTests(t *testing.T) {
 		t.Errorf("tests: got %d, want 3", overridden.Tests)
 	}
 }
+
+// The name the board shows is the product's, whichever end it came from: the
+// submission, the row that already existed, or the hostname.
+func TestProductSiteName(t *testing.T) {
+	cases := map[string]string{
+		// The live board, as submitted.
+		"Langflow (fork)":                         "Langflow",
+		"Dify Studio (self-hosted)":               "Dify",
+		"n8n (self-hosted editor, jjcm/n8n fork)": "n8n",
+		"Uptime Kuma (self-hosted dashboard)":     "Uptime Kuma",
+
+		// The same qualifiers without the parentheses.
+		"Langflow fork":                         "Langflow",
+		"n8n self-hosted editor, jjcm/n8n fork": "n8n",
+		"Immich selfhosted":                     "Immich",
+		"Home Assistant instance":               "Home Assistant",
+		"Dify Studio Dashboard":                 "Dify",
+
+		// A name that is nothing but the fork it was measured from keeps the
+		// repository, spelled the way it was submitted.
+		"jjcm/Langflow":          "Langflow",
+		"jjcm/langflow":          "langflow",
+		"github.com/jjcm/immich": "immich",
+
+		// Names that must survive untouched, including the ones that merely
+		// contain a qualifier's letters.
+		"Legend of Dave": "Legend of Dave",
+		"freeCodeCamp":   "freeCodeCamp",
+		"prompts.chat":   "prompts.chat",
+		"roadmap.sh":     "roadmap.sh",
+		"Stirling PDF":   "Stirling PDF",
+		"Open WebUI":     "Open WebUI",
+		"ComfyUI":        "ComfyUI",
+		"A1111":          "A1111",
+		"Forkify":        "Forkify",
+		"Editorial":      "Editorial",
+		"Selfhostr":      "Selfhostr",
+		"Console Table":  "Console Table",
+	}
+	for input, expected := range cases {
+		if got := leaderboard.ProductSiteName(input); got != expected {
+			t.Errorf("ProductSiteName(%q) = %q, want %q", input, got, expected)
+		}
+	}
+}
+
+// A name that is nothing but qualifiers has nothing to fall back on, so it is
+// kept as submitted: a nameless row is worse than a wordy one.
+func TestProductSiteNameKeepsANameMadeOnlyOfQualifiers(t *testing.T) {
+	for _, name := range []string{"Dashboard", "(self-hosted)", "fork"} {
+		if got := leaderboard.ProductSiteName(name); got == "" {
+			t.Errorf("ProductSiteName(%q) returned an empty name", name)
+		}
+	}
+}
+
+// The name is normalized wherever it came from, so a row stored under a
+// deployment name is corrected by the next run rather than keeping it forever.
+func TestUpsertSiteStoresTheProductNameAndCarriesThePullRequest(t *testing.T) {
+	now := time.Date(2026, 8, 25, 9, 0, 0, 0, time.UTC)
+	submission := leaderboard.SiteSubmission{
+		URL: "n8n.io", Mode: "cold", Name: "n8n (self-hosted editor, jjcm/n8n fork)",
+		PRURL:  "https://github.com/jjcm/n8n/pull/1",
+		LCPRaw: 1400, LCPDelta: -22, TTIRaw: 2300, TTIDelta: -17,
+	}
+
+	created := leaderboard.UpsertSite(nil, submission, now)
+	if created.Name != "n8n" {
+		t.Errorf("name: got %q, want %q", created.Name, "n8n")
+	}
+	if created.PRURL != "https://github.com/jjcm/n8n/pull/1" {
+		t.Errorf("prUrl: got %q", created.PRURL)
+	}
+
+	// A run that says nothing about identity keeps the stored PR link.
+	quiet := leaderboard.SiteSubmission{URL: "n8n.io", Mode: "cold", LCPRaw: 1300, TTIRaw: 2200}
+	kept := leaderboard.UpsertSite(&created, quiet, now.Add(time.Hour))
+	if kept.PRURL != created.PRURL || kept.Name != "n8n" {
+		t.Errorf("identity was lost by a metrics-only run: %+v", kept)
+	}
+
+	// A row stored under a deployment name is cleaned up by the next run.
+	legacy := leaderboard.SiteRow{Name: "Dify Studio (self-hosted)", URL: "dify.ai", Tests: 1}
+	repaired := leaderboard.UpsertSite(&legacy, leaderboard.SiteSubmission{
+		URL: "dify.ai", Mode: "cold", LCPRaw: 900, TTIRaw: 1800,
+	}, now)
+	if repaired.Name != "Dify" {
+		t.Errorf("stored name was not normalized: got %q, want %q", repaired.Name, "Dify")
+	}
+
+	// A later run can add the pull request the first one had not opened yet.
+	linked := leaderboard.UpsertSite(&repaired, leaderboard.SiteSubmission{
+		URL: "dify.ai", Mode: "cold", PRURL: "https://github.com/jjcm/dify/pull/1",
+		LCPRaw: 880, TTIRaw: 1750,
+	}, now.Add(time.Hour))
+	if linked.PRURL != "https://github.com/jjcm/dify/pull/1" {
+		t.Errorf("prUrl: got %q", linked.PRURL)
+	}
+}
+
+// The keep split is the latest run's, and a run that does not report one — an
+// older CLI, or a loop that kept nothing — leaves the last one standing rather
+// than blanking the row.
+func TestUpsertSiteCarriesTheKeepSplit(t *testing.T) {
+	now := time.Date(2026, 8, 25, 10, 0, 0, 0, time.UTC)
+	created := leaderboard.UpsertSite(nil, leaderboard.SiteSubmission{
+		URL: "example.com", Mode: "cold", LCPRaw: 1400, TTIRaw: 2300,
+		GenericKeepPct: 80, SiteSpecificKeepPct: 20,
+	}, now)
+	if created.GenericKeepPct != 80 || created.SiteSpecificKeepPct != 20 {
+		t.Errorf("split: got %d/%d, want 80/20", created.GenericKeepPct, created.SiteSpecificKeepPct)
+	}
+
+	silent := leaderboard.UpsertSite(&created, leaderboard.SiteSubmission{
+		URL: "example.com", Mode: "cold", LCPRaw: 1300, TTIRaw: 2200,
+	}, now.Add(time.Hour))
+	if silent.GenericKeepPct != 80 || silent.SiteSpecificKeepPct != 20 {
+		t.Errorf("a run that reported no split erased the last one: %+v", silent)
+	}
+
+	replaced := leaderboard.UpsertSite(&silent, leaderboard.SiteSubmission{
+		URL: "example.com", Mode: "cold", LCPRaw: 1200, TTIRaw: 2100,
+		GenericKeepPct: 50, SiteSpecificKeepPct: 50,
+	}, now.Add(2*time.Hour))
+	if replaced.GenericKeepPct != 50 || replaced.SiteSpecificKeepPct != 50 {
+		t.Errorf("split: got %d/%d, want 50/50", replaced.GenericKeepPct, replaced.SiteSpecificKeepPct)
+	}
+
+	// A brand new row with nothing reported has no split, not a zero one.
+	bare := leaderboard.UpsertSite(nil, leaderboard.SiteSubmission{
+		URL: "bare.example.com", Mode: "cold", LCPRaw: 1000, TTIRaw: 2000,
+	}, now)
+	if bare.GenericKeepPct != 0 || bare.SiteSpecificKeepPct != 0 {
+		t.Errorf("expected no split, got %d/%d", bare.GenericKeepPct, bare.SiteSpecificKeepPct)
+	}
+}

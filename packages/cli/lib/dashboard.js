@@ -198,12 +198,15 @@ function pad(text, width, align = "left") {
 function thinkingPanel({ width, height, log, model, provider }) {
   const inner = width - 4;
   const visible = log.slice(-Math.max(0, height - 2));
+  // 15 columns holds the longest tag the skill defines — `[INITIALIZING]` — plus
+  // the space that separates it from the sentence.
+  const TAG_WIDTH = 15;
   const body = visible.map((entry) => {
     const tag = `[${entry.tag}]`;
     return [
       seg(`${entry.time}  `, "time"),
-      seg(pad(tag, 13), "tag"),
-      seg(fit(entry.text, Math.max(0, inner - 10 - 13)), "text"),
+      seg(pad(tag, TAG_WIDTH), "tag"),
+      seg(fit(entry.text, Math.max(0, inner - 10 - TAG_WIDTH)), "text"),
     ];
   });
   const right = [
