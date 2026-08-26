@@ -19,7 +19,7 @@ import { listModels } from "../lib/agents/modelList.js";
 import { importChecklist } from "../lib/improvements.js";
 import { signedOutGuidance } from "../lib/invoke.js";
 import { createLoopView } from "../lib/loopView.js";
-import { modelsForProvider, resolveHostedModel, resolveModel } from "../lib/models.js";
+import { modelPickerOptions, modelsForProvider, resolveHostedModel, resolveModel } from "../lib/models.js";
 import { confirm, selectFrom } from "../lib/picker.js";
 import { createTui, tuiSupported } from "../lib/tui.js";
 import {
@@ -156,7 +156,7 @@ async function pickHostedModel(provider, modelFlag) {
   try {
     const index = await selectFrom({
       title: dim("  the server allowlists these; nothing else can be requested"),
-      options: models.map((model) => ({ label: `${model.label}  ${dim(model.id)}`, detail: model.detail })),
+      options: modelPickerOptions(models),
       defaultIndex: 0,
     });
     if (index === null) process.exit(0);
@@ -201,7 +201,6 @@ async function pickModel(provider, modelFlag, cwd) {
   const ranked = models.filter((model) => model.score !== null).length;
   const source = live.models ? `from ${provider.displayName}'s own model list` : "from makefaster's catalog";
   console.log(`  ${bold(`Which model should ${provider.displayName} run?`)} ${dim(`(${ranked} of ${models.length} ranked by CursorBench 3.2, ${source})`)}`);
-  console.log(dim("  the score ranks the model family; the id is what this CLI accepts"));
   if (ranked < models.length) {
     console.log(dim(`  ${provider.displayName} has ${ranked} model${ranked === 1 ? "" : "s"} in the snapshot; the rest are its own next-best models, unranked.`));
   }
@@ -209,7 +208,7 @@ async function pickModel(provider, modelFlag, cwd) {
   try {
     const index = await selectFrom({
       title: dim("  most intelligent first"),
-      options: models.map((model) => ({ label: `${model.label}  ${dim(model.id)}`, detail: model.detail })),
+      options: modelPickerOptions(models),
       defaultIndex: 0,
     });
     if (index === null) process.exit(0);
