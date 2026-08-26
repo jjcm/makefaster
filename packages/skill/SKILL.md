@@ -104,14 +104,44 @@ Use the heaviest-hitting **real, user-felt** metric you can actually measure
 on this machine, preferring:
 
 1. **Lighthouse** if available or installable
-   (`npx lighthouse <url> --output=json --quiet --chrome-flags="--headless=new"`)
-   — gives FCP / LCP / TBT / TTI / Speed Index in one run.
+   — gives FCP / LCP / TBT / TTI / Speed Index in one run. Launch it exactly
+   like this, every run:
+
+   ```sh
+   npx lighthouse <url> --output=json --quiet \
+     --chrome-flags="--headless=new --user-data-dir=./.makefaster/chrome-profile --no-first-run --no-default-browser-check"
+   ```
+
 2. Headless Chromium via **Playwright/Puppeteer** if the repo already has one
    — read `PerformanceNavigationTiming`, `largest-contentful-paint` entries,
-   and long tasks yourself.
+   and long tasks yourself. Launch the bundled headless browser
+   (`chromium.launch()` / `puppeteer.launch()`); never `connect` or
+   `connectOverCDP` to a browser you did not start.
 3. Last resort: **curl-level timings** (TTFB, full transfer time, total bytes
    of the entry page + critical assets). Weak, but honest — record that this
    is what you measured.
+
+### The measurement browser is never the user's browser
+
+The user may be working in their own Chrome while this loop runs. Measurement
+must never attach to the user's everyday Chrome: no new tabs in their windows,
+no shared profile, no attaching to their session. On every Lighthouse or
+DevTools-protocol run, cold and warm alike, baseline and re-measure alike:
+
+- Launch a **dedicated headless Chrome** (`--headless=new`) that this loop
+  starts and stops itself. That is what the `--chrome-flags` above guarantee;
+  they are a hard requirement, not a suggestion.
+- Give it an **isolated profile**: `--user-data-dir=./.makefaster/chrome-profile`
+  (under the session dir, already kept out of git; created on first launch).
+  Never launch against the user's default profile directory — a Chrome started
+  without its own `--user-data-dir` while the user's Chrome is running just
+  opens a tab in *their* browser.
+- Never pass `--port` to reuse an existing Chrome debugging port (9222 or any
+  other) unless that port belongs to a Chrome this loop launched itself. A
+  running debuggable Chrome you did not start is the user's; leave it alone.
+- If `CHROME_PATH` is set, use that binary — but still launch it headless with
+  the isolated `--user-data-dir` above. `CHROME_PATH` picks the executable,
+  never an existing browser session.
 
 Rules:
 
