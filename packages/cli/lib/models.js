@@ -213,6 +213,18 @@ export function modelsForProvider(providerKey, { live = null } = {}) {
     .map(({ order, ...model }) => model);
 }
 
+/**
+ * The picker's rows: the model name and nothing else. The id slug, the
+ * CursorBench score, and the "best for" copy stay out of the list — the row a
+ * user scans is the name, and the id is confirmed right after the choice.
+ *
+ * @param {Array<{label: string}>} models
+ * @returns {Array<{label: string}>}
+ */
+export function modelPickerOptions(models) {
+  return models.map((model) => ({ label: model.label }));
+}
+
 /** The top-intelligence model for a provider — the picker's default highlight. */
 export function defaultModelFor(providerKey, options) {
   return modelsForProvider(providerKey, options)[0] ?? null;
