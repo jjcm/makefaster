@@ -1,17 +1,17 @@
-// Package inference is the subsidized model proxy behind the `makefaster`
-// provider in the CLI.
+// Package inference is the subsidized model proxy that used to sit behind the
+// `makefaster` provider in the CLI: the server held one OpenRouter credential,
+// the CLI held nothing, and chat completions were forwarded on its behalf so
+// that somebody with none of the agent CLIs installed could still run the loop.
 //
-// Every other provider makefaster supports is a CLI the user already installed
-// and signed into, so the model is theirs and so is the bill. That excludes
-// anyone who has none of them. This path closes that gap: the server holds one
-// OpenRouter credential, the CLI holds nothing, and chat completions are
-// forwarded on the CLI's behalf.
+// That provider is gone — the CLI drives only the agent CLIs a user already
+// installed and signed into, where the model is theirs and so is the bill — so
+// nothing in this repo calls this endpoint any more. It is still served, and a
+// deployment that leaves OPENROUTER_API_KEY unset never turns it on.
 //
-// Which makes this the one endpoint on the box that spends money on request, so
-// the rules are deliberately narrow:
+// It remains the one endpoint on the box that spends money on request, so the
+// rules stay deliberately narrow:
 //
-//   - the model must be one of AllowedModels. The user picks between them in the
-//     CLI, but the set is the server's: a model that is not on the list is
+//   - the model must be one of AllowedModels: a model that is not on the list is
 //     refused rather than substituted, so nobody can turn this into an
 //     arbitrary-model proxy and no request quietly bills a model the caller did
 //     not ask for;
@@ -41,10 +41,10 @@ import (
 // DefaultModel is what a request that names no model gets.
 const DefaultModel = "stealth/ox-alpha"
 
-// AllowedModels is every model this proxy will ask for, in the order the CLI
-// offers them. Adding one here is a decision about what the credential may be
-// spent on, so the list is deliberately short and deliberately explicit — an
-// empty `model` means DefaultModel, and anything else is refused.
+// AllowedModels is every model this proxy will ask for. Adding one here is a
+// decision about what the credential may be spent on, so the list is
+// deliberately short and deliberately explicit — an empty `model` means
+// DefaultModel, and anything else is refused.
 var AllowedModels = []string{
 	"stealth/ox-alpha",
 	"z-ai/glm-5.2:free",
@@ -243,7 +243,7 @@ func resolveModel(requested any) (string, error) {
 	}
 	if !ModelAllowed(name) {
 		return "", &InvalidRequestError{Reason: fmt.Sprintf(
-			"%q is not a model this deployment serves — the hosted provider offers %s",
+			"%q is not a model this deployment serves — it offers %s",
 			name, strings.Join(AllowedModels, " and "))}
 	}
 	return name, nil

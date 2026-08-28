@@ -9,9 +9,10 @@ import (
 
 // POST /api/openrouter/v1/chat/completions
 //
-// The OpenAI-compatible surface the CLI's `makefaster` provider talks to: it
-// points an ordinary chat-completions client at `<api-base>/api/openrouter/v1`
-// and sends no credential, because the credential is here.
+// The OpenAI-compatible surface the CLI's `makefaster` provider used to talk
+// to: an ordinary chat-completions client points at `<api-base>/api/openrouter/v1`
+// and sends no credential, because the credential is here. That provider is
+// gone, so nothing in this repo calls it any more.
 //
 // This is the only endpoint that costs money per request, so it is rate limited
 // on its own budget rather than sharing the write endpoints' allowance, and the
@@ -23,7 +24,7 @@ func (s *Server) handleInferenceChat(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.inferenceLimiter.allow(clientIP(r)) {
 		s.writeJSON(w, http.StatusTooManyRequests, errorBody(
-			"the hosted model is rate limited — it is subsidized, so it is capped per IP. Wait a minute, or run makefaster with your own agent CLI (--cli cursor|claude|codex)."))
+			"the model proxy is rate limited — it is subsidized, so it is capped per IP. Wait a minute, or run makefaster with your own agent CLI (--cli cursor|claude|codex)."))
 		return
 	}
 
