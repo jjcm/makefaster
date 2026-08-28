@@ -150,7 +150,6 @@ class SiteLeaderboardPage extends HTMLElement {
             <div class="eyebrow">
               <span class="plus">+</span>
               <span>Autonomous Performance Research / 001</span>
-              <span class="eyebrow-dots dots" aria-hidden="true"></span>
             </div>
 
             <div class="page-head">
