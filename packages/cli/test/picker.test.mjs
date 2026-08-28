@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { clipLine, parseKeys, renderFrame, selectFrom, visibleLength } from "../lib/picker.js";
-import { HOSTED_MODELS, modelPickerOptions, modelsForProvider } from "../lib/models.js";
+import { modelPickerOptions, modelsForProvider } from "../lib/models.js";
 
 const stripStyles = (text) => text.replace(/\u001b\[[0-9;]*m/g, "");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -88,18 +88,6 @@ test("model picker rows are the model name and nothing else", () => {
     assert.doesNotMatch(line, /CursorBench/, "no benchmark score in a row");
     assert.doesNotMatch(line, /best for/, "no 'best for …' copy in a row");
     assert.doesNotMatch(line, /not in the .* snapshot/, "no unscored-model blurb in a row");
-  }
-});
-
-test("hosted model rows are also name-only — no server id, no blurb", () => {
-  const options = modelPickerOptions(HOSTED_MODELS);
-  assert.deepEqual(options, [{ label: "OX Alpha" }, { label: "GLM 5.2" }]);
-  const lines = renderFrame({ title: "  pick one", options, index: 1, width: 100, height: 24 }).map(stripStyles);
-  assert.equal(lines[1], "    1. OX Alpha");
-  assert.equal(lines[2], "  > 2. GLM 5.2");
-  for (const line of lines) {
-    assert.doesNotMatch(line, /stealth\/ox-alpha|z-ai\/glm/, "no server model id in a row");
-    assert.doesNotMatch(line, /free tier|default/, "no descriptor copy in a row");
   }
 });
 

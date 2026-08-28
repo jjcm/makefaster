@@ -19,7 +19,7 @@ import { listModels } from "../lib/agents/modelList.js";
 import { importChecklist } from "../lib/improvements.js";
 import { signedOutGuidance } from "../lib/invoke.js";
 import { createLoopView } from "../lib/loopView.js";
-import { modelPickerOptions, modelsForProvider, resolveHostedModel, resolveModel } from "../lib/models.js";
+import { modelPickerOptions, modelsForProvider, resolveModel } from "../lib/models.js";
 import { confirm, selectFrom } from "../lib/picker.js";
 import { createTui, tuiSupported } from "../lib/tui.js";
 import {
@@ -78,11 +78,10 @@ async function pickProvider(reports, cliFlag) {
     process.exit(1);
   }
 
-  console.log(`  ${bold("Available agents")} ${dim("(makefaster drives your existing install, or its own hosted model)")}`);
+  console.log(`  ${bold("Available agents")} ${dim("(makefaster drives the install you already have)")}`);
   for (const report of reports) {
     if (report.found) {
-      const where = report.hosted ? report.detail : report.executablePath;
-      console.log(`    ${OK} ${report.displayName.padEnd(14)} ${dim(where)}${report.version ? dim(`  (${report.version})`) : ""}`);
+      console.log(`    ${OK} ${report.displayName.padEnd(14)} ${dim(report.executablePath)}${report.version ? dim(`  (${report.version})`) : ""}`);
     } else {
       const note = report.error || report.hint || `not found — install: ${report.install}`;
       console.log(`    ${dim("-")} ${dim(report.displayName.padEnd(14))} ${dim(note)}`);
@@ -105,12 +104,10 @@ async function pickProvider(reports, cliFlag) {
       title: `  ${bold("Which agent should run the loop?")}`,
       options: found.map((report) => ({
         label: report.displayName,
-        detail: report.hosted
-          ? report.detail
-          : `${report.executablePath}${report.version ? ` — ${report.version}` : ""}`,
+        detail: `${report.executablePath}${report.version ? ` — ${report.version}` : ""}`,
       })),
-      // The hosted model is first and pre-selected: it is the only option that
-      // needs nothing installed and nothing signed into.
+      // Nothing here is preferred over anything else — every row is an install
+      // the user already chose — so the highlight starts on the first one found.
       defaultIndex: 0,
     });
     if (index === null) process.exit(0);
@@ -119,50 +116,6 @@ async function pickProvider(reports, cliFlag) {
     if (err.code === "NO_TTY") {
       fail(`multiple agent CLIs found (${found.map((r) => r.key).join(", ")}) but stdin is not a TTY — pass --cli <${found.map((r) => r.key).join("|")}>`, 2);
     }
-    throw err;
-  }
-}
-
-/**
- * Pick one of the hosted provider's models. The server allowlists them and holds
- * the credential, so this list is short, fixed, and not ranked by anything —
- * but it is a real choice, and `--model` makes it without a prompt.
- *
- * An id the proxy does not serve is refused here rather than sent: the run would
- * fail on its first completion anyway, and it would fail with the proxy's error
- * rather than one that says what to pass instead.
- */
-async function pickHostedModel(provider, modelFlag) {
-  const models = provider.hostedModels ?? [];
-  const offered = models.map((model) => model.id).join(" | ");
-
-  if (modelFlag) {
-    const model = resolveHostedModel(modelFlag);
-    if (!model) {
-      fail(`--model ${modelFlag}: ${provider.displayName} does not serve that model.\n` +
-        `  The hosted provider offers: ${offered}\n` +
-        "  (the server holds the credential, so the set of models is its decision)");
-    }
-    return model;
-  }
-
-  if (models.length <= 1) return models[0] ?? null;
-  if (!process.stdin.isTTY) {
-    console.log(dim(`  (non-interactive: using ${models[0].id} — pass --model <${offered}> to choose)`));
-    return models[0];
-  }
-
-  console.log(`  ${bold(`Which model should ${provider.displayName} run?`)} ${dim("(both run through makefaster.dev on its credential, not yours)")}`);
-  try {
-    const index = await selectFrom({
-      title: dim("  the server allowlists these; nothing else can be requested"),
-      options: modelPickerOptions(models),
-      defaultIndex: 0,
-    });
-    if (index === null) process.exit(0);
-    return models[index];
-  } catch (err) {
-    if (err.code === "NO_TTY") return models[0];
     throw err;
   }
 }
@@ -177,8 +130,6 @@ async function pickHostedModel(provider, modelFlag) {
  * asking a CLI what models an account can run requires that account.
  */
 async function pickModel(provider, modelFlag, cwd) {
-  if (provider.hosted) return pickHostedModel(provider, modelFlag);
-
   const live = await listModels({ provider, cwd });
   if (live.authRequired) fail(signedOutGuidance(provider, live.detail), 3);
   const options = { live: live.models };
@@ -222,44 +173,6 @@ async function pickModel(provider, modelFlag, cwd) {
 }
 
 /**
- * Ask the makefaster server whether its hosted model is configured, and whether
- * it serves the one that was picked. A server that says no to either is a hard
- * stop with the alternatives spelled out; a server that cannot be reached is
- * only a warning, because the run may still work and the proxy will say so
- * plainly if it does not.
- */
-async function checkHostedModel(apiBase, model) {
-  let health;
-  try {
-    const res = await fetch(`${apiBase}/api/health`, { headers: { accept: "application/json" } });
-    health = await res.json();
-  } catch {
-    console.log(yellow(`  note: could not reach ${apiBase} to check the hosted model — trying anyway.\n`));
-    return;
-  }
-  if (health?.inference && health.inference.available === false) {
-    fail(
-      `${apiBase} has no hosted model configured (OPENROUTER_API_KEY is unset on that server).\n` +
-      "  Run against your own agent CLI instead — --cli cursor|claude|codex — or point --api at a\n" +
-      "  deployment that has one.",
-      3,
-    );
-  }
-  // The allowlist belongs to the deployment, so a deployment that publishes one
-  // is the authority on whether this run can happen at all. An older server
-  // publishes no list and is taken at its word.
-  const served = health?.inference?.models;
-  if (model && Array.isArray(served) && served.length > 0 && !served.includes(model.id)) {
-    fail(
-      `${apiBase} does not serve ${model.id}.\n` +
-      `  That deployment offers: ${served.join(" | ")}\n` +
-      "  Pass --model with one of those, or point --api at a deployment that serves this one.",
-      3,
-    );
-  }
-}
-
-/**
  * Run one round under makefaster's own full-screen dashboard. The agent CLI
  * stays hidden behind piped stdio either way; this only decides who draws.
  *
@@ -267,7 +180,7 @@ async function checkHostedModel(apiBase, model) {
  * happen on the normal screen — including when the user quits or the round
  * throws.
  */
-async function runRoundInDashboard({ provider, prompt, cwd, model, paths, state, apiBase }) {
+async function runRoundInDashboard({ provider, prompt, cwd, model, paths, state }) {
   const controller = new AbortController();
   const tui = createTui({ onQuit: () => controller.abort() });
   const view = createLoopView({ tui, paths, state, provider, model });
@@ -277,8 +190,7 @@ async function runRoundInDashboard({ provider, prompt, cwd, model, paths, state,
   view.render();
   try {
     const result = await runAgent({
-      provider, prompt, cwd, model, apiBase,
-      plannedRuns: state.plannedRuns,
+      provider, prompt, cwd, model,
       reporter: view.reporter,
       signal: controller.signal,
     });
@@ -306,21 +218,17 @@ async function main() {
   console.log(banner(VERSION));
   const apiBase = resolveApiBase({ flag: args.api });
 
-  // 1. Offer the agents: the hosted model first, then whichever CLIs are
-  //    installed. The user picks BEFORE anything runs.
+  // 1. Offer the agent CLIs that are actually installed. The user picks BEFORE
+  //    anything runs.
   const reports = detectProviders();
   const provider = await pickProvider(reports, args.cli);
-  console.log(`  ${OK} using ${bold(provider.displayName)} ${dim(provider.hosted ? provider.detail : provider.executablePath)}\n`);
+  console.log(`  ${OK} using ${bold(provider.displayName)} ${dim(provider.executablePath)}\n`);
 
-  // 2. Pick the model. For an installed CLI, makefaster reuses the credentials
-  //    it already stored and never starts a login, opens a browser, or injects
-  //    an API key — so a signed-out install is reported here and the run stops.
-  //    The hosted provider offers the models its server allowlists, and its
-  //    equivalent of "signed out" is a server with no credential, which is
-  //    worth learning now rather than three minutes into a run.
+  // 2. Pick the model. makefaster reuses the credentials the CLI already stored
+  //    and never starts a login, opens a browser, or injects an API key — so a
+  //    signed-out install is reported here and the run stops.
   const model = await pickModel(provider, args.model, cwd);
   if (model) console.log(`  ${OK} model ${bold(model.label)} ${dim(model.id)}\n`);
-  if (provider.hosted) await checkHostedModel(apiBase, model);
 
   // 3. Import the improvement checklist (live board -> GitHub -> target repo ->
   //    the catalog bundled with this CLI, which is what answers while the
@@ -364,8 +272,8 @@ async function main() {
     else console.log("");
 
     const { exitCode, stderrTail, aborted, authRequired, detail } = useTui
-      ? await runRoundInDashboard({ provider, prompt, cwd, model, paths, state, apiBase })
-      : await runAgent({ provider, prompt, cwd, model, apiBase, plannedRuns: state.plannedRuns });
+      ? await runRoundInDashboard({ provider, prompt, cwd, model, paths, state })
+      : await runAgent({ provider, prompt, cwd, model });
 
     // A signed-out install can only be certain once the child has spoken.
     if (authRequired) fail(signedOutGuidance(provider, detail || stderrTail), 3);

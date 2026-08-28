@@ -66,13 +66,20 @@ test("errors: unknown flag, bad cli, missing values, extra positional", () => {
   assert.match(parseArgs(["--extras"]).errors[0], /needs a value/);
   assert.match(parseArgs(["--url"]).errors[0], /needs a value/);
   assert.match(parseArgs(["a", "b"]).errors[0], /unexpected argument/);
+  assert.match(parseArgs(["--cli", "gemini"]).errors[0], /cursor, claude, codex/);
 });
 
-test("--cli accepts the hosted provider under either name", () => {
+// The hosted provider is gone rather than quietly repointed, and the names it
+// answered to say so — silently falling back to a local CLI would run somebody's
+// loop on an agent and an account they did not choose.
+test("--cli makefaster is refused with the reason, under every name it had", () => {
   for (const value of ["makefaster", "openrouter", "hosted", "MakeFaster"]) {
-    assert.equal(parseArgs(["--cli", value]).args.cli, "makefaster", value);
+    const { args, errors } = parseArgs(["--cli", value]);
+    assert.equal(args.cli, null, value);
+    assert.equal(errors.length, 1, value);
+    assert.match(errors[0], /no longer hosts a model of its own/, value);
+    assert.match(errors[0], /--cli cursor, claude, or codex/, value);
   }
-  assert.match(parseArgs(["--cli", "gemini"]).errors[0], /makefaster, cursor, claude, codex/);
 });
 
 test("help and version flags", () => {
@@ -83,6 +90,8 @@ test("help and version flags", () => {
   assert.doesNotMatch(USAGE, /--max-misses/);
   assert.match(USAGE, /--model <id>/);
   assert.match(USAGE, /--no-tui/);
-  assert.match(USAGE, /An agent CLI runs\nhidden/);
-  assert.match(USAGE, /--cli <makefaster\|cursor\|claude\|codex>/);
+  assert.match(USAGE, /The agent CLI runs hidden/);
+  assert.match(USAGE, /--cli <cursor\|claude\|codex>/);
+  // No copy may still advertise a model makefaster hosts itself.
+  assert.doesNotMatch(USAGE, /hosted|ox-alpha|glm-5\.2/i);
 });

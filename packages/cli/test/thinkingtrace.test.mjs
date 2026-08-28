@@ -57,14 +57,6 @@ test("thinkingTextOf reads reasoning out of every provider's stream", () => {
     thinkingTextOf("codex-jsonl", { msg: { type: "agent_reasoning", text: "measure before keeping" } }),
     "measure before keeping",
   );
-  assert.equal(
-    thinkingTextOf("openai-message", { role: "assistant", reasoning: "walk the checklist in order" }),
-    "walk the checklist in order",
-  );
-  assert.equal(
-    thinkingTextOf("openai-message", { role: "assistant", reasoning_details: [{ text: "one" }, { text: " two" }] }),
-    "one two",
-  );
 });
 
 test("thinkingTextOf never reads a tool call, a tool result, or plain assistant prose", () => {
@@ -78,7 +70,9 @@ test("thinkingTextOf never reads a tool call, a tool result, or plain assistant 
     ["claude-stream-json", { type: "user", message: { content: [{ type: "tool_result", content: "1200 lines of output" }] } }],
     ["codex-app-server", { method: "item/completed", params: { item: { type: "commandExecution", command: "yarn build" } } }],
     ["codex-jsonl", { msg: { type: "exec_command_begin", command: ["yarn", "build"] } }],
-    ["openai-message", { role: "assistant", content: "the build passed" }],
+    // The hosted provider's own completions were the fourth format here. It is
+    // gone, and an unknown format reads as no thought rather than as a guess.
+    ["openai-message", { role: "assistant", reasoning: "walk the checklist in order" }],
   ];
   for (const [format, event] of notThoughts) {
     assert.equal(thinkingTextOf(format, event), null, `${format}: ${JSON.stringify(event)}`);

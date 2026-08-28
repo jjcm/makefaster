@@ -1,41 +1,27 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as models from "../lib/models.js";
 import {
   FAMILY_BEST,
-  HOSTED_MODELS,
   MAX_RECOMMENDATIONS,
   parseCursorModelList,
   benchmarkFamily,
   benchmarkScore,
   defaultModelFor,
   modelsForProvider,
-  resolveHostedModel,
   resolveModel,
 } from "../lib/models.js";
 
-// The hosted provider is a real choice of two, and the ids are what the server's
-// allowlist contains — the picker cannot offer anything the proxy would refuse.
-// These strings are duplicated in backend/internal/inference/proxy.go on purpose:
-// they are a contract, and a contract with one copy is a hope.
-test("the hosted provider offers both allowlisted models, with human labels", () => {
-  assert.deepEqual(HOSTED_MODELS.map((model) => model.id), ["stealth/ox-alpha", "z-ai/glm-5.2:free"]);
-  for (const model of HOSTED_MODELS) {
-    assert.ok(model.label && !model.label.includes("/"), `${model.id} needs a human label`);
-    assert.ok(model.detail, `${model.id} needs a line explaining what it is`);
-  }
-  // The picker starts on the first entry, so the order is the default.
-  assert.equal(HOSTED_MODELS[0].id, "stealth/ox-alpha");
-});
-
-test("resolveHostedModel accepts either id and refuses everything else", () => {
-  for (const model of HOSTED_MODELS) {
-    assert.equal(resolveHostedModel(model.id).id, model.id);
-    // Case is forgiven on the way in; the id that comes back is canonical.
-    assert.equal(resolveHostedModel(model.id.toUpperCase()).id, model.id);
-    assert.equal(resolveHostedModel(` ${model.id} `).id, model.id);
-  }
-  for (const wrong of ["z-ai/glm-5.2", "stealth/ox", "anthropic/claude-opus-4", "gpt-5.6-sol", "", null, undefined]) {
-    assert.equal(resolveHostedModel(wrong), null, String(wrong));
+// The catalog offers the CLIs' own models and nothing makefaster serves itself:
+// the two ids the hosted proxy used to allowlist are not free models any more,
+// and there is no provider left that could ask for them.
+test("no hosted model list survives in the catalog", () => {
+  assert.equal(models.HOSTED_MODELS, undefined);
+  assert.equal(models.resolveHostedModel, undefined);
+  for (const key of ["cursor", "claude", "codex"]) {
+    for (const model of modelsForProvider(key)) {
+      assert.doesNotMatch(model.id, /ox-alpha|glm-5\.2/, `${key} must not offer ${model.id}`);
+    }
   }
 });
 

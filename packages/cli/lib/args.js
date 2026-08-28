@@ -12,25 +12,18 @@
 export const USAGE = `Usage: npx makefaster [dir] [options]
 
 Runs the makefaster autoresearch loop against the site in [dir] (default:
-the current directory), driving either one of makefaster's own hosted models or
-an agent CLI you already have installed and are signed into. An agent CLI runs
-hidden: makefaster keeps the terminal, so its native interface never draws and
-it never asks you to log in, trust the workspace, or approve individual tools.
+the current directory), driving an agent CLI you already have installed and are
+signed into. The agent CLI runs hidden: makefaster keeps the terminal, so its
+native interface never draws and it never asks you to log in, trust the
+workspace, or approve individual tools.
 
 Options:
-  --cli <makefaster|cursor|claude|codex>
-                                Skip the picker and use this agent.
-                                "makefaster" is the hosted default: the model
-                                runs through makefaster.dev, so it needs no
-                                local CLI, no account, and no API key of yours.
+  --cli <cursor|claude|codex>   Skip the picker and use this agent. It must be
+                                installed on this machine: makefaster drives
+                                your own install and hosts no model of its own.
   --model <id>                  Skip the model picker and use this model id.
-                                For an agent CLI the ids come from its own model
-                                list (see the picker for the ranked five). For
-                                --cli makefaster it is one of the two the hosted
-                                proxy serves:
-                                  stealth/ox-alpha    (default)
-                                  z-ai/glm-5.2:free
-                                Anything else is refused rather than sent.
+                                The ids come from the chosen CLI's own model
+                                list (see the picker for the ranked five).
   --url <example.com>           The public URL of the site (used for the
                                 site-leaderboard submission)
   --api <base>                  Leaderboard API base
@@ -62,13 +55,17 @@ export const DEFAULT_EXTRAS = 5;
 const MAX_EXTRAS = 20;
 
 const CLI_ALIASES = new Map([
-  // The hosted provider answers to both names: it is makefaster's own option,
-  // and it is OpenRouter underneath.
-  ["makefaster", "makefaster"], ["openrouter", "makefaster"], ["hosted", "makefaster"],
   ["cursor", "cursor"], ["cursor-agent", "cursor"], ["agent", "cursor"],
   ["claude", "claude"], ["claude-code", "claude"], ["claudecode", "claude"],
   ["codex", "codex"],
 ]);
+
+/**
+ * `--cli makefaster` used to select makefaster's own hosted model, served
+ * through makefaster.dev. It is gone, and the names it answered to are kept
+ * here so passing one says that rather than reading as a typo.
+ */
+const REMOVED_CLIS = new Set(["makefaster", "openrouter", "hosted"]);
 
 export function parseArgs(argv) {
   const args = {
@@ -104,9 +101,12 @@ export function parseArgs(argv) {
         const value = takeValue(argv, i, "--cli");
         if (value !== null) {
           i++;
-          const key = CLI_ALIASES.get(value.toLowerCase());
-          if (!key) errors.push(`--cli must be one of: makefaster, cursor, claude, codex (got "${value}")`);
-          else args.cli = key;
+          const wanted = value.toLowerCase();
+          const key = CLI_ALIASES.get(wanted);
+          if (key) args.cli = key;
+          else if (REMOVED_CLIS.has(wanted)) {
+            errors.push(`--cli ${value} is gone: makefaster no longer hosts a model of its own — use --cli cursor, claude, or codex.`);
+          } else errors.push(`--cli must be one of: cursor, claude, codex (got "${value}")`);
         }
         break;
       }
