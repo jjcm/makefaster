@@ -351,6 +351,10 @@ site-header { display: block; }
   text-transform: uppercase;
   color: var(--red);
 }
+/* The credit is the only interactive thing on the line, so it is the only part
+   that gets an affordance — the plus marks stay decorative. */
+.specimen-line a:hover { text-decoration: underline; text-underline-offset: 4px; }
+.specimen-line a:focus-visible { outline: 1px solid var(--red); outline-offset: 5px; }
 
 /* metric band ------------------------------------------------------------ */
 

@@ -95,10 +95,10 @@ class LandingPage extends HTMLElement {
                 </span>
               </button>
             </div>
-            <div class="specimen-line" aria-hidden="true">
-              <span class="plus">+</span>
-              <span>Specimen No. 001</span>
-              <span class="plus">+</span>
+            <div class="specimen-line">
+              <span class="plus" aria-hidden="true">+</span>
+              <a href="https://x.com/pwnies" target="_blank" rel="noopener noreferrer">Made by @pwnies</a>
+              <span class="plus" aria-hidden="true">+</span>
             </div>
           </section>
 
