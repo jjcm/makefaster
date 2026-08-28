@@ -2,12 +2,16 @@
  * The landing page: hero, the copyable `npx makefaster` command, the
  * average-improvement band, and the four-step loop diagram.
  *
- * Light DOM so css/style.css keeps applying, and rendered from a template
- * string because the markup is static — the only behaviour is the copy button.
+ * Light DOM so css/style.css keeps applying. The markup is a template string
+ * because almost all of it is static; the two behaviours are the copy button
+ * and the band, whose numbers are read from the live site leaderboard rather
+ * than written into the template (see site-stats.js).
  */
 import "./site-header.js";
 import "./geo-row.js";
 import "./spec-footer.js";
+import { getSites } from "./api.js";
+import { afterBarHeight, formatDeltaPct, summarizeSites } from "./site-stats.js";
 
 const COMMAND = "npx makefaster";
 
@@ -27,23 +31,53 @@ const ANNO_ARROW = `
     <path d="M18 1c2 8-3 16-11 20"></path><path d="M12.9 22.2 7 21l2.6-5.4"></path>
   </svg>`;
 
-/** One before/after metric column of the averages band. */
-function metric(abbr, label, afterHeight, pct) {
+/**
+ * One before/after metric column. The bar height and the percentage are filled
+ * in by renderStats() once the board answers — the template ships the frame,
+ * not a number.
+ */
+function metric(key, abbr, label) {
   return `
-    <div class="metric">
+    <div class="metric" data-metric="${key}">
       <div class="metric-abbr">${abbr}</div>
       <div class="metric-sub">${label}</div>
-      <div class="metric-chart">
+      <div class="metric-chart metric-chart--empty">
         <div class="bar bar--before" aria-hidden="true"></div>
-        <div class="bar bar--after" style="height:${afterHeight}px" aria-hidden="true"></div>
+        <div class="bar bar--after" style="height:0" aria-hidden="true"></div>
         <div class="metric-anno">
-          <span class="pct">${pct}</span>
+          <span class="pct">&ndash;</span>
           ${ANNO_ARROW}
         </div>
       </div>
       <div class="metric-xlabels"><span>Before</span><span>After</span></div>
     </div>`;
 }
+
+/**
+ * The count column. Not a before/after pair — how many sites are on the board
+ * has no baseline — so it keeps the column frame and prints one number.
+ */
+function countMetric(key, abbr, label, caption) {
+  return `
+    <div class="metric" data-metric="${key}">
+      <div class="metric-abbr">${abbr}</div>
+      <div class="metric-sub">${label}</div>
+      <div class="metric-count"><span class="count">&ndash;</span></div>
+      <div class="metric-xlabels"><span>${caption}</span></div>
+    </div>`;
+}
+
+/**
+ * What the band says it is averaging. The methodology line is the honest place
+ * for the cold/warm choice, and an empty board says so rather than presenting
+ * three dashes with no explanation.
+ */
+const BAND_NOTES = {
+  loading: "Averaged across the public site leaderboard.",
+  ready: "Averaged across the public site leaderboard \u2014 one run per site, the cold load where a site has both.",
+  empty: "No runs on the public site leaderboard yet. It fills up as loops submit their results.",
+  failed: "The public site leaderboard could not be read just now.",
+};
 
 const CROSSHAIR = `
   <circle cx="15" cy="15" r="9"></circle><path d="M15 1v28M1 15h28"></path>`;
@@ -124,15 +158,14 @@ class LandingPage extends HTMLElement {
               <div class="band-info">
                 <span class="mono-label">Average Improvements</span>
                 <span class="dash">&mdash;</span>
-                <p>Based on sites that have completed 5+ improvement cycles.</p>
+                <p id="band-note">${BAND_NOTES.loading}</p>
                 <div class="band-meta">Dataset: public site leaderboard<br>Updated: continuously</div>
                 <div class="dots" aria-hidden="true"></div>
               </div>
 
-              ${metric("LCP", "Largest Contentful Paint", 64, "-38%")}
-              ${metric("INP", "Interaction to Next Paint", 76, "-27%")}
-              ${metric("CLS", "Cumulative Layout Shift", 79, "-24%")}
-              ${metric("TTFB", "Time to First Byte", 72, "-31%")}
+              ${metric("lcp", "LCP", "Largest Contentful Paint")}
+              ${metric("tti", "TTI", "Time to Interactive")}
+              ${countMetric("sites", "SITES", "Measured on the public board", "sites")}
             </div>
           </section>
 
@@ -168,6 +201,49 @@ class LandingPage extends HTMLElement {
       <div class="page-end" aria-hidden="true"></div>`;
 
     this.querySelector("#copy-cmd").addEventListener("click", this.copyCommand.bind(this));
+    this.loadStats();
+  }
+
+  /**
+   * Fill the band from the live board. A board that cannot be read leaves the
+   * dashes in place and says so — the rest of the page is not about the
+   * leaderboard, so a failure here must not take it down.
+   */
+  loadStats() {
+    var self = this;
+    getSites().then(
+      function (rows) {
+        self.renderStats(summarizeSites(rows));
+      },
+      function () {
+        self.setNote(BAND_NOTES.failed);
+      }
+    );
+  }
+
+  renderStats(stats) {
+    this.setDelta("lcp", stats.lcpDelta);
+    this.setDelta("tti", stats.ttiDelta);
+    this.querySelector('[data-metric="sites"] .count').textContent = String(stats.siteCount);
+    this.setNote(stats.siteCount === 0 ? BAND_NOTES.empty : BAND_NOTES.ready);
+  }
+
+  /**
+   * One metric column. With no measurement the bars stay hidden rather than
+   * collapsing to zero height: a 0px "after" bar beside a full "before" bar
+   * reads as a 100% improvement, which is the one thing an empty board must
+   * not appear to claim.
+   */
+  setDelta(key, pct) {
+    var column = this.querySelector('[data-metric="' + key + '"]');
+    var measured = typeof pct === "number" && isFinite(pct);
+    column.querySelector(".pct").textContent = formatDeltaPct(pct);
+    column.querySelector(".bar--after").style.height = afterBarHeight(pct) + "px";
+    column.querySelector(".metric-chart").classList.toggle("metric-chart--empty", !measured);
+  }
+
+  setNote(text) {
+    this.querySelector("#band-note").textContent = text;
   }
 
   copyCommand() {

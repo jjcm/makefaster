@@ -377,7 +377,7 @@ site-header { display: block; }
 
 .band-grid {
   display: grid;
-  grid-template-columns: 250px repeat(4, 1fr);
+  grid-template-columns: 250px repeat(3, 1fr);
 }
 
 .band-info {
@@ -435,6 +435,33 @@ site-header { display: block; }
 .bar--before { background: var(--slate); height: 104px; }
 .bar--after { background: var(--ink); }
 
+/*
+ * Nothing measured yet: keep the frame and the baseline rule so the column
+ * holds its place, and draw no bars. A zero-height "after" bar beside a full
+ * "before" bar would read as a 100% improvement.
+ */
+.metric-chart--empty .bar,
+.metric-chart--empty .metric-anno svg { visibility: hidden; }
+
+/* The count column: one number, no baseline to compare it against. */
+.metric-count {
+  height: 132px;
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 1px solid var(--line-strong);
+  padding: 0 6px;
+}
+.metric-count .count {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 44px;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
 .metric-anno {
   position: absolute;
   right: 2px;
@@ -461,6 +488,7 @@ site-header { display: block; }
   color: var(--muted);
 }
 .metric-xlabels span { width: 36px; text-align: center; }
+.metric-count + .metric-xlabels span { width: auto; }
 
 /* how it works ----------------------------------------------------------- */
 
@@ -891,10 +919,13 @@ site-header { display: block; }
 
 @media (max-width: 1100px) {
   .stat-cards { grid-template-columns: repeat(3, 1fr); }
-  .band-grid { grid-template-columns: 1fr 1fr; }
+  /* The info panel takes a row of its own and the three metrics share the
+     next one — three into two columns would leave a hole. */
+  .band-grid { grid-template-columns: repeat(3, 1fr); }
   .band-info { grid-column: 1 / -1; border-bottom: 1px solid var(--line); }
   .metric:nth-child(2) { border-left: none; }
   .metric { border-top: 1px solid var(--hairline); }
+  .metric-count .count { font-size: 38px; }
   .how { grid-template-columns: 1fr; }
   .steps { grid-template-columns: 1fr 1fr; gap: 30px 10px; padding-top: 0; }
   .step-arrow { display: none; }
