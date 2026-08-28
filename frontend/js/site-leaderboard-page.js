@@ -144,7 +144,7 @@ class SiteLeaderboardPage extends HTMLElement {
         <site-header></site-header>
 
         <div class="sheet-inner">
-          <geo-row></geo-row>
+          <geo-row bare></geo-row>
 
           <main>
             <div class="eyebrow">
