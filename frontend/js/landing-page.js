@@ -11,6 +11,22 @@ import "./spec-footer.js";
 
 const COMMAND = "npx makefaster";
 
+/**
+ * The red annotation arrow beside each percentage: a curve down from the
+ * "before" bar to the "after" one, with a chevron head at the tip.
+ *
+ * The head is symmetric about the curve's own end tangent and spread wide
+ * enough to clear it. A narrower head tucks its upper arm underneath the curve,
+ * which is what made this read as half a `<` rather than an arrowhead. Both
+ * arms are ~6 units long and every point stays inside the 22x26 viewBox, so
+ * nothing depends on overflow to be visible.
+ */
+const ANNO_ARROW = `
+  <svg width="22" height="26" viewBox="0 0 22 26" fill="none" stroke="currentColor" stroke-width="1.3"
+       stroke-linecap="round" stroke-linejoin="round" style="color:var(--red)" aria-hidden="true">
+    <path d="M18 1c2 8-3 16-11 20"></path><path d="M12.9 22.2 7 21l2.6-5.4"></path>
+  </svg>`;
+
 /** One before/after metric column of the averages band. */
 function metric(abbr, label, afterHeight, pct) {
   return `
@@ -22,9 +38,7 @@ function metric(abbr, label, afterHeight, pct) {
         <div class="bar bar--after" style="height:${afterHeight}px" aria-hidden="true"></div>
         <div class="metric-anno">
           <span class="pct">${pct}</span>
-          <svg width="22" height="26" viewBox="0 0 22 26" fill="none" stroke="currentColor" stroke-width="1.3" style="color:var(--red)" aria-hidden="true">
-            <path d="M18 1c2 8-3 16-11 20"></path><path d="M11.5 17.5 6.4 21.9l6.4 1.4"></path>
-          </svg>
+          ${ANNO_ARROW}
         </div>
       </div>
       <div class="metric-xlabels"><span>Before</span><span>After</span></div>
