@@ -570,7 +570,7 @@ site-header { display: block; }
 
 .stat-cards {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 18px;
   margin-top: 26px;
 }
@@ -920,7 +920,8 @@ site-header { display: block; }
 /* ------------------------------------------------------------ responsive */
 
 @media (max-width: 1100px) {
-  .stat-cards { grid-template-columns: repeat(3, 1fr); }
+  /* Four cards, so two rows of two rather than three and a straggler. */
+  .stat-cards { grid-template-columns: repeat(2, 1fr); }
   /* The info panel takes a row of its own and the three metrics share the
      next one — three into two columns would leave a hole. */
   .band-grid { grid-template-columns: repeat(3, 1fr); }
