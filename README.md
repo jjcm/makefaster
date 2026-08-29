@@ -329,6 +329,7 @@ Every variable has a working default, so an empty `.env` boots. See
 | `MIGRATIONS_DIR` | `./internal/db/migrations` | goose migrations, applied on start |
 | `SEED_DIR` | `../data` | seed JSON, read only into empty tables; the committed default is empty |
 | `FRONTEND_DIR` | `../frontend` | SPA static root |
+| `MAKEFASTER_FAVICON_DIR` | `/var/lib/makefaster/favicons` | where downloaded site favicons are stored; outside the repo, `off` to serve none (see [Site favicons](#site-favicons)) |
 | `MAKEFASTER_EMBEDDINGS_API_KEY` / `OPENAI_API_KEY` | — | switches the embedder from local to a remote OpenAI-compatible endpoint |
 | `MAKEFASTER_EMBEDDINGS_MODEL` | `text-embedding-3-small` | remote embedding model |
 | `MAKEFASTER_EMBEDDINGS_BASE_URL` | `https://api.openai.com/v1` | any OpenAI-compatible host |
@@ -361,6 +362,7 @@ start empty and grow as loops report results:
 |----------|------|---------|
 | `GET /data/sites.json` | live site rows, one per site per load mode | `MakefasterAPI.getSites()` |
 | `GET /data/improvements.json` | live ranked categories | `MakefasterAPI.getImprovements()` |
+| `GET /favicons/<site>-<id>.png` | one site's favicon, downloaded from its own origin once and normalized — the only image URL the board loads (see [Site favicons](#site-favicons)) | — |
 | `GET /api/health` | `{ ok, embedder, threshold }` | — |
 | `POST /api/submit-site` | `{ url, favicon?, name?, prUrl?, genericKeepPct?, siteSpecificKeepPct?, tips?, lcpBefore?, lcpRaw, lcpDelta, ttiBefore?, ttiRaw, ttiDelta, mode: cold\|warm }` — upserts the site's row; URL + favicon shown publicly, `name` reduced to the product's own name, `prUrl` (or `pr`) linked from it. `tips` is up to 10 `{ text, about? }` notes to the catalog maintainers (280/80 chars, clamped): stored privately, acknowledged only as a count, never served by any endpoint | `MakefasterAPI.submitSite(payload)` |
 | `POST /api/submit-improvements` | `{ improvements: [{ name, description?, deltaMs?, deltaPct? }] }` — anonymous; names and descriptions are normalized to generic techniques and embedding-matched into categories | `MakefasterAPI.submitImprovements(payload)` |
@@ -402,6 +404,52 @@ folded a new run into an existing one, both as `{ ok, created, row }`; invalid
 payloads come back as `400 { ok: false, errors: [...] }`. Writes are serialized,
 POSTs are rate limited to 60/minute/IP, bodies are capped at 256 KB, and every
 response carries permissive CORS so the SPA can be hosted anywhere.
+
+### Site favicons
+
+The board used to point `<img src>` straight at `row.favicon`, which is a URL on
+somebody else's server — and plenty of them refuse an image request that comes
+from a page on another domain. Hotlink protection, a cross-origin 403, a
+redirect to an HTML error page: the row showed a broken image where an icon
+belonged.
+
+So the server keeps its own copy
+([`backend/internal/favicon`](backend/internal/favicon)):
+
+- **downloaded once**, on ingest (`POST /api/submit-site` knows the URL first)
+  or on the first board render that needs it, from the submitted or derived
+  favicon URL;
+- **normalized** to one size and one format — a **64px square PNG**, fitted and
+  centred on transparency so a wide icon is not stretched, which is exactly what
+  the board's 28px `.favicon-box` draws at 26px on a 2x display. ICO (including
+  the bare Windows bitmaps inside it), PNG, JPEG and GIF are read; an SVG or
+  WebP favicon is not, and falls back;
+- **stored under `MAKEFASTER_FAVICON_DIR`**, outside the repo and outside
+  `FRONTEND_DIR`, so a git pull cannot clobber the cache and the static handler
+  cannot serve whatever else lands in it;
+- **served from `/favicons/<site>-<digest of the source URL>.png`** with a
+  day-long `max-age`. Same origin as the board, so no CORS and no referrer
+  policy is involved; the digest in the name is what makes a row that starts
+  pointing at a different icon get a different path rather than a stale file.
+
+Nothing waits on a download. `GET /data/sites.json` starts the ones it needs and
+answers at the speed of the database, so an origin's slow CDN cannot slow the
+board down; the row carries the served path as `faviconPath` alongside the
+original `favicon`, and until the file lands — or when the fetch fails outright
+— the board draws the site's initial, which is what a row with no favicon has
+always done. A failed URL is left alone for ten minutes rather than retried on
+every render, and a stored icon is refreshed in the background after two weeks
+while the old one keeps being served.
+
+Two things this deliberately does not do: it does not fetch a URL that is not
+absolute `http(s)`, and it **does not connect to a non-public address**. The
+favicon URL arrives through a public write endpoint, so a server that would
+fetch `http://169.254.169.254/…` on request is an SSRF hole; the check runs on
+the resolved address, which is what makes it survive a hostname that points at
+loopback and a redirect chain that ends there.
+
+`MAKEFASTER_FAVICON_DIR=off` turns the whole thing off: no route, no
+`faviconPath`, letters on the board. It never falls back to hotlinking.
 
 ### The hosted model proxy
 
@@ -603,7 +651,10 @@ Row shapes:
 // prUrl is the pull request the run was opened as, and is absent when the row
 // has none — the board links the site name to it when it is there. The two keep
 // percentages are absent together when the run reported no split.
+// favicon is the icon at its own origin; faviconPath is this server's
+// normalized copy of it, and the only one the board loads.
 { "name": "Example", "url": "example.com", "favicon": "https://…",
+  "faviconPath": "/favicons/example.com-9f2c1b7d04.png",
   "prUrl": "https://github.com/jjcm/example/pull/1",
   "genericKeepPct": 80, "siteSpecificKeepPct": 20,
   "lcpBefore": 2791, "lcpRaw": 1842, "lcpDelta": -34,
@@ -646,7 +697,10 @@ needs `MARIADB_DSN`, `FRONTEND_DIR`, and `MIGRATIONS_DIR` pointing at the
 shipped copies of `frontend/` and `backend/internal/db/migrations/`. If it is to
 collect [chains of thought](#chains-of-thought) it also needs write access to
 `MAKEFASTER_TRACE_DIR` — somewhere private, outside `FRONTEND_DIR`, and it is
-not backed up by anything that publishes. Put a
+not backed up by anything that publishes. `MAKEFASTER_FAVICON_DIR` wants write
+access too, for the opposite reason: those bytes are public
+([site favicons](#site-favicons)), and they only need to live somewhere a
+deploy will not overwrite. Put a
 TLS-terminating proxy (Caddy/nginx/Cloudflare) in front and point the domain at
 it — the `npx makefaster` CLI submits to `https://makefaster.dev` by default,
 and elsewhere with `--api` or `MAKEFASTER_API_BASE`.
@@ -665,8 +719,16 @@ server too so the boards stay live.
 npm test                                    # CLI: detection, args, payloads,
                                             # protocol children, catalog, dashboard,
                                             # the end screen's questions
-cd backend && go test ./...                 # server, embedder, categorization, traces
+cd backend && go test ./...                 # server, embedder, categorization,
+                                            # traces, favicons
 ```
+
+The favicon suite serves its own origin with `httptest` and never touches the
+internet: an unfetchable URL, an origin that refuses the request, an origin that
+answers 200 with an HTML page, a successful convert down to the served pixels, a
+second request that is a file read rather than a second download, a stale file
+served while it refreshes behind the request, eight concurrent viewers sharing
+one download, and the private-address guard refusing a loopback origin.
 
 The CLI suite spawns real protocol children — a stub agent speaking ACP and one
 speaking the codex app-server dialect — and asserts on the frames they receive,
