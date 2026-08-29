@@ -907,8 +907,8 @@ site-header { display: block; }
 .bracket { position: absolute; width: 16px; height: 16px; }
 .bracket.bl { left: -12px; bottom: 10px; border-left: 2px solid var(--red); border-bottom: 2px solid var(--red); }
 .bracket.br { right: -12px; bottom: 10px; border-right: 2px solid var(--red); border-bottom: 2px solid var(--red); }
-.sheet--framed .bracket.bl { left: -20px; bottom: -6px; }
-.sheet--framed .bracket.br { right: -20px; bottom: -6px; }
+.sheet--framed .bracket.bl { left: -46px; bottom: -12px; }
+.sheet--framed .bracket.br { right: -46px; bottom: -12px; }
 
 .page-end {
   height: 12px;
