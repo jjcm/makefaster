@@ -23,7 +23,11 @@ const DATA_PATHS = {
   improvements: "/data/improvements.json",
 };
 
-function apiBase() {
+/**
+ * The API origin, empty when the SPA and the server are the same host. Also
+ * used for the favicons the server serves alongside the data endpoints.
+ */
+export function apiBase() {
   return (window.MAKEFASTER_API_BASE || "").replace(/\/$/, "");
 }
 
@@ -56,9 +60,11 @@ function postJson(path, payload) {
 
 /**
  * Site leaderboard rows.
- * Row shape: { name, url, favicon, lcpBefore, lcpRaw, lcpDelta, ttiBefore,
- *              ttiRaw, ttiDelta, mode, tests, measuredAt, prUrl?,
+ * Row shape: { name, url, favicon, faviconPath?, lcpBefore, lcpRaw, lcpDelta,
+ *              ttiBefore, ttiRaw, ttiDelta, mode, tests, measuredAt, prUrl?,
  *              genericKeepPct?, siteSpecificKeepPct? }
+ * favicon is the icon at its own origin; faviconPath is this server's
+ * normalized copy of it, and the only one the board loads (see favicon.js).
  * lcpDelta / ttiDelta are percentages vs. baseline (negative = faster).
  * mode is "cold" or "warm".
  * prUrl is the pull request the run was opened as, absent when there is none.

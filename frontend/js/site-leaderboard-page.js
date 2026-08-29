@@ -6,7 +6,8 @@
  */
 import "./site-header.js";
 import "./spec-footer.js";
-import { getSites } from "./api.js";
+import { apiBase, getSites } from "./api.js";
+import { faviconSrc } from "./favicon.js";
 import { escapeHtml, renderPagination } from "./format.js";
 import { nextSort, sortRows, sortableHeader } from "./table-sort.js";
 
@@ -327,19 +328,28 @@ class SiteLeaderboardPage extends HTMLElement {
     }
   }
 
+  /**
+   * The site's icon, always loaded from this server's own copy — never from the
+   * site's origin, which is where the broken images came from: plenty of hosts
+   * refuse an image request that comes from a page on another domain.
+   *
+   * A row with no served copy yet (the server downloads it in the background on
+   * first sight) or none possible falls back to the site's initial, which is
+   * also what an image that fails to decode lands on.
+   */
   faviconCell(row) {
     var box = document.createElement("div");
     box.className = "favicon-box";
     var letter = ((row.name || row.url || "?").trim()[0] || "?").toUpperCase();
-    if (row.favicon) {
+    var src = faviconSrc(row, apiBase());
+    if (src) {
       var img = document.createElement("img");
       img.alt = "";
       img.loading = "lazy";
-      img.referrerPolicy = "no-referrer";
       img.addEventListener("error", function () {
         box.innerHTML = '<div class="favicon-fallback">' + escapeHtml(letter) + "</div>";
       });
-      img.src = row.favicon;
+      img.src = src;
       box.appendChild(img);
     } else {
       box.innerHTML = '<div class="favicon-fallback">' + escapeHtml(letter) + "</div>";
