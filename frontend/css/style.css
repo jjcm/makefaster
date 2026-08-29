@@ -36,6 +36,7 @@ body {
   font-size: 16px;
   line-height: 1.5;
   min-height: 100vh;
+  padding-bottom: 48px;
   position: relative;
 }
 
