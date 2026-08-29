@@ -1,13 +1,13 @@
 /**
- * The site leaderboard: aggregate stat cards, a cold/warm filter, search, a
- * paginated table of sites, and CSV export.
+ * The site leaderboard: aggregate stat cards, a cold/warm filter, search, and a
+ * paginated table of sites.
  *
  * Light DOM so css/style.css keeps applying.
  */
 import "./site-header.js";
 import "./spec-footer.js";
 import { getSites } from "./api.js";
-import { escapeHtml, renderPagination, downloadCsv } from "./format.js";
+import { escapeHtml, renderPagination } from "./format.js";
 import { nextSort, sortRows, sortableHeader } from "./table-sort.js";
 
 const PER_PAGE = 10;
@@ -167,12 +167,6 @@ class SiteLeaderboardPage extends HTMLElement {
                   </svg>
                   <input type="search" id="site-search" placeholder="Search sites..." aria-label="Search sites">
                 </label>
-                <button type="button" class="btn-outline" id="export-csv">
-                  <svg class="icon" width="14" height="14" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">
-                    <path d="M7.5 1v8.5M4 6l3.5 3.5L11 6"></path><path d="M1.5 11v2.5h12V11"></path>
-                  </svg>
-                  <span>Export CSV</span>
-                </button>
               </div>
             </section>
 
@@ -206,7 +200,6 @@ class SiteLeaderboardPage extends HTMLElement {
       showing: this.querySelector("#sites-showing"),
       pagination: this.querySelector("#sites-pagination"),
       search: this.querySelector("#site-search"),
-      exportBtn: this.querySelector("#export-csv"),
       segmented: this.querySelectorAll(".segmented button"),
     };
 
@@ -244,28 +237,6 @@ class SiteLeaderboardPage extends HTMLElement {
       self.state.q = self.els.search.value;
       self.state.page = 1;
       self.renderTable();
-    });
-
-    this.els.exportBtn.addEventListener("click", function () {
-      downloadCsv(
-        "makefaster-sites-" + self.state.mode + ".csv",
-        [
-          "name", "url", "pr_url", "mode",
-          "lcp_before_ms", "lcp_after_ms", "lcp_improvement_pct",
-          "tti_before_ms", "tti_after_ms", "tti_improvement_pct",
-          "generic_keep_pct", "site_specific_keep_pct",
-          "tests", "measured_at",
-        ],
-        self.filtered().map(function (r) {
-          return [
-            r.name, r.url, r.prUrl || r.pr || "", r.mode,
-            r.lcpBefore, r.lcpRaw, r.lcpDelta,
-            r.ttiBefore, r.ttiRaw, r.ttiDelta,
-            r.genericKeepPct, r.siteSpecificKeepPct,
-            r.tests, r.measuredAt,
-          ];
-        })
-      );
     });
   }
 
