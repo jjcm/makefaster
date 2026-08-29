@@ -534,7 +534,13 @@ site-header { display: block; }
 .pictoframe .c.bl { bottom: 0; left: 0; border-bottom: 1.5px solid var(--ink); border-left: 1.5px solid var(--ink); }
 .pictoframe .c.br { bottom: 0; right: 0; border-bottom: 1.5px solid var(--ink); border-right: 1.5px solid var(--ink); }
 
-.step-arrow { align-self: start; margin-top: 40px; color: var(--red); }
+.step-arrow {
+  align-self: start;
+  margin-top: 40px;
+  color: var(--red);
+  position: relative;
+  left: -42px;
+}
 
 .step-label {
   font-family: var(--font-mono);
