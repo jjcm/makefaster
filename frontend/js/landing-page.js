@@ -108,8 +108,8 @@ class LandingPage extends HTMLElement {
   connectedCallback() {
     this.innerHTML = `
       <div class="sheet sheet--open">
+        <span class="corner-plus tl">+</span>
         <span class="corner-plus tr">+</span>
-        <span class="corner-plus ml">+</span>
 
         <site-header></site-header>
 

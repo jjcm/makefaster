@@ -1,7 +1,6 @@
 /**
  * Small rendering helpers shared by the two leaderboard components:
- * escaping, the windowed pagination control, CSV export, and a seeded PRNG for
- * the decorative sparkbars.
+ * escaping, the windowed pagination control, and CSV export.
  */
 
 export function escapeHtml(value) {
@@ -86,16 +85,4 @@ export function downloadCsv(filename, header, rows) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-}
-
-/** Deterministic PRNG for stable decorative sparkbars. */
-export function mulberry32(seed) {
-  var a = seed >>> 0;
-  return function () {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    var t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
 }

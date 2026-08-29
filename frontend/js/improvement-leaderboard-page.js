@@ -1,14 +1,13 @@
 /**
- * The improvement leaderboard: ranked categories with icons, decorative impact
- * sparkbars, pagination, and CSV export.
+ * The improvement leaderboard: ranked categories with icons, pagination, and
+ * CSV export.
  *
  * Light DOM so css/style.css keeps applying.
  */
 import "./site-header.js";
-import "./geo-row.js";
 import "./spec-footer.js";
 import { getImprovements } from "./api.js";
-import { escapeHtml, renderPagination, downloadCsv, mulberry32 } from "./format.js";
+import { escapeHtml, renderPagination, downloadCsv } from "./format.js";
 import { nextSort, sortRows, sortableHeader } from "./table-sort.js";
 
 const PER_PAGE = 12;
@@ -64,27 +63,6 @@ function iconMarkup(icon) {
   return HAND_ICONS[icon] || HAND_ICONS.default;
 }
 
-/* Deterministic decorative histogram, scaled by impact. */
-function sparkbars(seed, pct) {
-  var rnd = mulberry32(0x6d66 + seed * 977);
-  var max = 18;
-  var scale = Math.min(1, Math.abs(pct) / 28.6);
-  var bars = [];
-  for (var i = 0; i < 11; i++) {
-    var decay = 1 - i * 0.062;
-    var h = max * (0.35 + 0.65 * scale) * decay * (0.7 + rnd() * 0.45);
-    h = Math.max(2, Math.min(max, h));
-    bars.push(
-      '<rect x="' + i * 4.4 + '" y="' + (max - h).toFixed(1) + '" width="2.6" height="' + h.toFixed(1) + '"/>'
-    );
-  }
-  return (
-    '<svg width="49" height="18" viewBox="0 0 49 18" fill="currentColor" aria-hidden="true">' +
-    bars.join("") +
-    "</svg>"
-  );
-}
-
 class ImprovementLeaderboardPage extends HTMLElement {
   constructor() {
     super();
@@ -103,15 +81,7 @@ class ImprovementLeaderboardPage extends HTMLElement {
         <site-header></site-header>
 
         <div class="sheet-inner">
-          <geo-row></geo-row>
-
           <main>
-            <div class="eyebrow">
-              <span class="plus">+</span>
-              <span>Autonomous Performance Research / 001</span>
-              <span class="eyebrow-dots dots" aria-hidden="true"></span>
-            </div>
-
             <div class="page-head">
               <h1 class="page-title">Improvement Leaderboard</h1>
               <div class="page-sub">
@@ -191,7 +161,7 @@ class ImprovementLeaderboardPage extends HTMLElement {
       })
       .catch(function (err) {
         self.els.tbody.innerHTML =
-          '<tr><td colspan="6" style="text-align:center;color:var(--red);padding:34px 16px;">' +
+          '<tr><td colspan="5" style="text-align:center;color:var(--red);padding:34px 16px;">' +
           "Could not load /data/improvements.json &mdash; start the server with ./run.sh (see README). " +
           "(" + escapeHtml(err.message) + ")</td></tr>";
       });
@@ -208,8 +178,7 @@ class ImprovementLeaderboardPage extends HTMLElement {
       '<th scope="col">Improvement Category</th>' +
       '<th scope="col">Description</th>' +
       sortableHeader(sort, "count", "Times Improved") +
-      sortableHeader(sort, "avgImprovementPct", "Avg Improvement") +
-      '<th scope="col"><span class="visually-hidden"></span></th>';
+      sortableHeader(sort, "avgImprovementPct", "Avg Improvement");
   }
 
   renderTable() {
@@ -224,7 +193,7 @@ class ImprovementLeaderboardPage extends HTMLElement {
 
     if (!data.length) {
       this.els.tbody.innerHTML =
-        '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:34px 16px;">' +
+        '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:34px 16px;">' +
         "No categories yet &mdash; the board fills up as loops submit their improvements." +
         "</td></tr>";
       this.els.showing.textContent = "Showing 0 improvement categories";
@@ -234,8 +203,8 @@ class ImprovementLeaderboardPage extends HTMLElement {
 
     this.els.tbody.innerHTML = pageRows
       .map(function (r, i) {
-        // The "#" column is the position in the order on screen; the server's
-        // own rank only seeds the sparkbars so they do not reshuffle on sort.
+        // The "#" column is the position in the order on screen, not the
+        // server's own rank.
         var position = start + i + 1;
         return (
           "<tr>" +
@@ -248,7 +217,6 @@ class ImprovementLeaderboardPage extends HTMLElement {
           '<td class="desc-cell">' + escapeHtml(r.description || "") + "</td>" +
           '<td class="count-cell">' + escapeHtml(fmt.format(r.count)) + "</td>" +
           '<td class="green-cell">' + escapeHtml(r.avgImprovementPct + "%") + "</td>" +
-          '<td class="sparkbars-cell">' + sparkbars(r.rank || position, r.avgImprovementPct) + "</td>" +
           "</tr>"
         );
       })
