@@ -51,22 +51,6 @@ const PR_GLYPH =
 const HTTP_URL = /^https?:\/\//i;
 
 /**
- * How the run's kept changes split between reusable techniques and findings
- * that only mattered to this site. A row with no split — every submission from
- * before the board recorded one, and every run that kept nothing — shows
- * nothing at all, rather than an honest-looking 0%.
- */
-function keepSplitMarkup(row) {
-  var generic = row.genericKeepPct;
-  var siteSpecific = row.siteSpecificKeepPct;
-  if (typeof generic !== "number" || generic + (siteSpecific || 0) <= 0) return "";
-  return (
-    '<div class="site-keeps" title="' + generic + '% of the kept changes were reusable techniques, ' +
-    (100 - generic) + '% were specific to this site">' + generic + "% generic</div>"
-  );
-}
-
-/**
  * The site's name, linked to the pull request that made it faster when the row
  * has one. Rows submitted before the board stored that link — and any run that
  * was not opened as a PR — stay plain text rather than pointing nowhere.
@@ -423,7 +407,7 @@ class SiteLeaderboardPage extends HTMLElement {
       cell.appendChild(self.faviconCell(r));
       var meta = document.createElement("div");
       meta.innerHTML =
-        siteNameMarkup(r) + '<div class="site-url">' + escapeHtml(r.url) + "</div>" + keepSplitMarkup(r);
+        siteNameMarkup(r) + '<div class="site-url">' + escapeHtml(r.url) + "</div>";
       cell.appendChild(meta);
       siteTd.appendChild(cell);
       tr.appendChild(siteTd);
