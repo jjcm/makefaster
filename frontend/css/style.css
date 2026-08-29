@@ -829,8 +829,6 @@ site-header { display: block; }
 
 .green-cell { font-family: var(--font-mono); font-weight: 700; font-size: 14.5px; letter-spacing: 0.08em; color: var(--green); }
 
-.sparkbars-cell { color: var(--green); }
-
 /* pagination ------------------------------------------------------------- */
 
 .table-foot {
