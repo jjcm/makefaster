@@ -376,9 +376,13 @@ site-header { display: block; }
 }
 .band-xhair.bottom { top: 100%; }
 
+/* The info panel is a column of the band, not a label beside it, so it takes
+   the same track width as the three metrics. minmax(0, ...) rather than a bare
+   1fr: a plain fr floors at min-content, which would let the widest chart or
+   the longest copy pull its own column wider than the rest. */
 .band-grid {
   display: grid;
-  grid-template-columns: 250px repeat(3, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .band-info {
@@ -909,7 +913,7 @@ site-header { display: block; }
   .stat-cards { grid-template-columns: repeat(2, 1fr); }
   /* The info panel takes a row of its own and the three metrics share the
      next one — three into two columns would leave a hole. */
-  .band-grid { grid-template-columns: repeat(3, 1fr); }
+  .band-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .band-info { grid-column: 1 / -1; border-bottom: 1px solid var(--line); }
   .metric:nth-child(2) { border-left: none; }
   .metric { border-top: 1px solid var(--hairline); }
