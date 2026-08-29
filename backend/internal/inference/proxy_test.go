@@ -55,7 +55,7 @@ func request(t *testing.T, body string) []byte {
 // credential on. Every id on that list is forwarded exactly as asked for.
 func TestChatCompletionsForwardsEveryAllowlistedModel(t *testing.T) {
 	if len(inference.AllowedModels) < 2 {
-		t.Fatalf("the hosted provider is meant to offer a choice, got %v", inference.AllowedModels)
+		t.Fatalf("the proxy is meant to allowlist a choice of models, got %v", inference.AllowedModels)
 	}
 	for _, model := range inference.AllowedModels {
 		fake := newUpstream(t)

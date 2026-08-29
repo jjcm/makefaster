@@ -60,11 +60,12 @@ func main() {
 		ThresholdOverride: cfg.Embeddings.ThresholdOverride,
 	}, logger)
 
-	// The hosted model proxy. Booting without a credential is supported: the
-	// endpoint answers 503 and the CLI's other providers are unaffected.
+	// The hosted model proxy. Booting without a credential is the expected
+	// state now that no client in this repo calls it: the endpoint answers 503
+	// and nothing else on the box is affected.
 	models := inference.New(cfg.Inference.APIKey, cfg.Inference.BaseURL, logger)
 	if !models.Available() {
-		logger.Warn("OPENROUTER_API_KEY is not set; the hosted `makefaster` provider will answer 503",
+		logger.Warn("OPENROUTER_API_KEY is not set; the model proxy will answer 503",
 			"models", models.Models())
 	}
 

@@ -29,13 +29,13 @@ const (
 	DefaultOpenRouterBaseURL = "https://openrouter.ai/api/v1"
 )
 
-// Inference configures the subsidized model proxy the `makefaster` provider
-// runs on: the CLI has no vendor CLI and no key of its own, so this server holds
-// the OpenRouter credential and forwards chat completions on its behalf.
+// Inference configures the subsidized model proxy that the CLI's `makefaster`
+// provider used to run on: this server holds the OpenRouter credential and
+// forwards chat completions on a client's behalf.
 //
-// APIKey empty is a supported state, not a misconfiguration: the provider still
-// appears in the CLI's picker and the proxy answers 503 with an explanation,
-// which is a better failure than a provider that silently is not there.
+// APIKey empty is a supported state, not a misconfiguration, and it is the
+// expected one now that the provider is gone and nothing in this repo calls the
+// endpoint: the proxy answers 503 with an explanation.
 type Inference struct {
 	APIKey  string
 	BaseURL string

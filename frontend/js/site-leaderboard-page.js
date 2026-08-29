@@ -144,13 +144,12 @@ class SiteLeaderboardPage extends HTMLElement {
         <site-header></site-header>
 
         <div class="sheet-inner">
-          <geo-row></geo-row>
+          <geo-row bare></geo-row>
 
           <main>
             <div class="eyebrow">
               <span class="plus">+</span>
               <span>Autonomous Performance Research / 001</span>
-              <span class="eyebrow-dots dots" aria-hidden="true"></span>
             </div>
 
             <div class="page-head">
@@ -165,8 +164,6 @@ class SiteLeaderboardPage extends HTMLElement {
               ${statCard("card-sites", "Sites Submitted",
                 '<ellipse cx="8" cy="3.4" rx="6" ry="2.4"></ellipse><path d="M2 3.4v9.2c0 1.3 2.7 2.4 6 2.4s6-1.1 6-2.4V3.4"></path><path d="M2 8c0 1.3 2.7 2.4 6 2.4s6-1.1 6-2.4"></path>',
                 "<span>sites</span>")}
-              ${statCard("card-tests", "Avg Tests / Site",
-                '<circle cx="8" cy="8" r="7"></circle><path d="M8 3.5V8l3 2"></path>', "<span>tests</span>")}
               <div class="stat-card">
                 <div class="stat-card-head">
                   <svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">
@@ -226,7 +223,6 @@ class SiteLeaderboardPage extends HTMLElement {
       lcp: this.querySelector("#card-lcp"),
       tti: this.querySelector("#card-tti"),
       sites: this.querySelector("#card-sites"),
-      tests: this.querySelector("#card-tests"),
       updated: this.querySelector("#card-updated"),
       updatedSub: this.querySelector("#card-updated-sub"),
       head: this.querySelector("#sites-head"),
@@ -356,18 +352,12 @@ class SiteLeaderboardPage extends HTMLElement {
     this.els.lcp.textContent = Math.round(avg("lcpDelta")) + "%";
     this.els.tti.textContent = Math.round(avg("ttiDelta")) + "%";
 
+    // Both modes, so a site measured cold and warm is still one site.
     var unique = {};
     this.rows.forEach(function (r) {
-      unique[r.url] = r.tests || 0;
+      unique[r.url] = true;
     });
-    var urls = Object.keys(unique);
-    this.els.sites.textContent = fmt.format(urls.length);
-
-    var testsAvg =
-      urls.reduce(function (a, u) {
-        return a + unique[u];
-      }, 0) / urls.length;
-    this.els.tests.textContent = testsAvg.toFixed(1);
+    this.els.sites.textContent = fmt.format(Object.keys(unique).length);
 
     var latest = this.rows.reduce(function (a, r) {
       return r.measuredAt && r.measuredAt > a ? r.measuredAt : a;

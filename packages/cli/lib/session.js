@@ -10,7 +10,6 @@ import { fileURLToPath } from "node:url";
 import { runAcpSession } from "./agents/acp.js";
 import { runClaudeSession } from "./agents/claudeCode.js";
 import { runCodexSession } from "./agents/codexAppServer.js";
-import { runOpenRouterSession } from "./agents/openrouter.js";
 import { createProgressReporter } from "./progress.js";
 import { openThinkingTrace, resetThinkingTrace, withThinkingTrace } from "./thinkingTrace.js";
 
@@ -181,8 +180,7 @@ export function continuePrompt(plan) {
 }
 
 /**
- * Run one round of the loop in the chosen agent CLI, hidden — or, for the hosted
- * provider, in this process against the model proxy on the makefaster server.
+ * Run one round of the loop in the chosen agent CLI, hidden.
  *
  * Each provider is a non-TTY protocol child (see lib/invoke.js): ACP for Cursor,
  * the Agent SDK for Claude Code, `codex app-server` for Codex. None of them
@@ -197,10 +195,6 @@ export function continuePrompt(plan) {
  * `authRequired` means the install is signed out. makefaster never fixes that
  * itself: no login, no browser, no injected API key.
  *
- * `plannedRuns` is how many measured iterations the session is supposed to
- * contain (see runPlan). Only the hosted provider needs it, and only to size
- * its own runaway guard.
- *
  * Every provider's reasoning is captured to `.makefaster/thinking-trace.jsonl`
  * on the way past — a local file under a directory the session already keeps
  * out of git, which the end screen can offer to submit and which nothing else
@@ -209,7 +203,7 @@ export function continuePrompt(plan) {
  *
  * @returns {Promise<{exitCode: number, stderrTail: string, eventCount: number, lastLabel: string|null, aborted: boolean, authRequired: boolean, detail: string|null}>}
  */
-export async function runAgent({ provider, prompt, cwd, model = null, env = process.env, reporter, signal, apiBase, plannedRuns = null }) {
+export async function runAgent({ provider, prompt, cwd, model = null, env = process.env, reporter, signal }) {
   const progress = reporter ?? createProgressReporter();
   const trace = openThinkingTrace({ path: sessionPaths(cwd).trace });
   const tracing = withThinkingTrace(progress, trace);
@@ -217,10 +211,6 @@ export async function runAgent({ provider, prompt, cwd, model = null, env = proc
     cursor: runAcpSession,
     claude: runClaudeSession,
     codex: runCodexSession,
-    // The hosted provider needs the server it runs on, the step log it reports
-    // through, and the size of the run — it has no child process to outlive it,
-    // so its own turn budget is the only thing that can cut the walk short.
-    makefaster: (args) => runOpenRouterSession({ ...args, apiBase, plannedRuns, stepLogPath: sessionPaths(cwd).steps }),
   };
   const runner = runners[provider.key];
   if (!runner) throw new Error(`no protocol runner is defined for provider "${provider.key}"`);

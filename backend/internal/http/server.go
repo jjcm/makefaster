@@ -16,7 +16,8 @@
 //	                                and served by nothing (see internal/trace)
 //	POST /api/openrouter/v1/chat/completions
 //	                                the subsidized model proxy the CLI's
-//	                                `makefaster` provider runs on
+//	                                `makefaster` provider used to run on; no
+//	                                client in this repo calls it any more
 //
 // There is no GET counterpart to submit-trace, and adding one would be a
 // mistake rather than a feature: unknown GET paths under /api/ answer 404 so
@@ -196,9 +197,9 @@ type healthBody struct {
 	Inference inferenceHealth `json:"inference"`
 }
 
-// inferenceHealth tells the CLI whether the hosted provider will work here
-// before it starts a run, and which models it may pick from. It reports whether
-// a credential is configured — never anything about the credential itself.
+// inferenceHealth tells a client whether the model proxy will work here before
+// it spends a request finding out, and which models it may ask for. It reports
+// whether a credential is configured — never anything about the credential.
 type inferenceHealth struct {
 	Available bool     `json:"available"`
 	Model     string   `json:"model"`

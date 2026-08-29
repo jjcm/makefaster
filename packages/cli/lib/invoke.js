@@ -24,9 +24,7 @@
  *   OPENAI_API_KEY are never set by makefaster — an injected key fights the
  *   OAuth credentials the CLI already stored and can itself cause prompts. The
  *   child inherits the user's environment untouched, so it finds ~/.claude,
- *   ~/.cursor and CODEX_HOME/~/.codex exactly as the native CLI does. Nor is
- *   OPENROUTER_API_KEY: the hosted provider's credential belongs to the server
- *   and this process is never told it (see lib/agents/openrouter.js).
+ *   ~/.cursor and CODEX_HOME/~/.codex exactly as the native CLI does.
  * - A signed-out install therefore fails with an auth-required error from the
  *   child. That is the expected signal: makefaster reports it in one line and
  *   stops rather than trying to fix it.
@@ -39,16 +37,10 @@
 /** stdin is a pipe we own for protocol frames, never the user's terminal. */
 export const PROTOCOL_STDIO = ["pipe", "pipe", "pipe"];
 
-/**
- * Keys makefaster must never set; an injected key can fight stored OAuth.
- *
- * OPENROUTER_API_KEY is here for a different reason: the hosted provider's
- * credential lives on the server and the CLI is never told it, so anything in
- * this process setting one would mean the boundary had moved.
- */
+/** Keys makefaster must never set; an injected key can fight stored OAuth. */
 export const NEVER_INJECTED_ENV = [
   "ANTHROPIC_API_KEY", "CURSOR_API_KEY", "OPENAI_API_KEY", "CLAUDE_API_KEY",
-  "CODEX_API_KEY", "OPENROUTER_API_KEY",
+  "CODEX_API_KEY",
 ];
 
 /**

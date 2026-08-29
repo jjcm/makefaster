@@ -43,7 +43,7 @@ function textOf(content) {
  * never a tool result, a diff, or a command's output.
  *
  * @param {string} streamFormat "acp", "claude-stream-json", "codex-app-server",
- *   "codex-jsonl", or "openai-message" (the hosted provider's own completions)
+ *   or "codex-jsonl"
  * @param {unknown} event
  * @returns {string|null}
  */
@@ -91,15 +91,6 @@ function extract(streamFormat, event) {
         return textOf(item.text ?? item.summary);
       }
       return /^agent_reasoning/.test(String(inner.type || "")) ? textOf(inner.delta ?? inner.text) : null;
-    }
-
-    // The hosted provider holds the conversation itself, so its "event" is an
-    // assistant message. OpenRouter puts reasoning in one of three shapes
-    // depending on the upstream model.
-    case "openai-message": {
-      if (typeof event.reasoning === "string") return event.reasoning;
-      if (typeof event.reasoning_content === "string") return event.reasoning_content;
-      return Array.isArray(event.reasoning_details) ? textOf(event.reasoning_details) : null;
     }
 
     default:

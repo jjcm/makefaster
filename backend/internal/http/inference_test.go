@@ -162,8 +162,8 @@ func TestInferenceProxyIsRateLimitedOnItsOwnBudget(t *testing.T) {
 	}
 }
 
-// GET /api/health tells the CLI whether the hosted provider will work here
-// before a run starts — and says nothing about the credential itself.
+// GET /api/health tells a client whether the model proxy will work here before
+// it spends a request — and says nothing about the credential itself.
 func TestHealthReportsWhetherTheHostedModelIsAvailable(t *testing.T) {
 	upstream, _ := fakeUpstream(t, http.StatusOK, `{}`)
 	for _, test := range []struct {
