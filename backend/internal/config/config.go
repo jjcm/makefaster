@@ -23,6 +23,13 @@ const (
 	// MAKEFASTER_TRACE_DIR to "off" turns collection off entirely.
 	DefaultTraceDir = "/var/lib/makefaster/traces"
 
+	// Where the site leaderboard's favicons are downloaded, normalized and
+	// served from. Outside the repo and outside FRONTEND_DIR so a deploy or a
+	// git pull cannot clobber the cache; it is served by its own route rather
+	// than by the static handler. Setting MAKEFASTER_FAVICON_DIR to "off"
+	// turns the whole feature off, and the board draws letters instead.
+	DefaultFaviconDir = "/var/lib/makefaster/favicons"
+
 	DefaultEmbeddingsModel   = "text-embedding-3-small"
 	DefaultEmbeddingsBaseURL = "https://api.openai.com/v1"
 
@@ -64,6 +71,7 @@ type Config struct {
 	FrontendDir   string
 	SeedDir       string
 	TraceDir      string
+	FaviconDir    string
 	Embeddings    Embeddings
 	Inference     Inference
 }
@@ -73,6 +81,13 @@ type Config struct {
 // POST /api/submit-trace answers 503 saying so.
 func (c Config) TracesEnabled() bool {
 	return c.TraceDir != "" && !strings.EqualFold(c.TraceDir, "off")
+}
+
+// FaviconsEnabled reports whether this deployment downloads and serves site
+// favicons itself. Off means the board falls back to each site's initial — it
+// never hotlinks the origin's icon, which is the thing this replaced.
+func (c Config) FaviconsEnabled() bool {
+	return c.FaviconDir != "" && !strings.EqualFold(c.FaviconDir, "off")
 }
 
 // Addr is the host:port passed to net/http.
@@ -90,6 +105,7 @@ func Load() Config {
 		FrontendDir:   envString("FRONTEND_DIR", DefaultFrontendDir),
 		SeedDir:       envString("SEED_DIR", DefaultSeedDir),
 		TraceDir:      envString("MAKEFASTER_TRACE_DIR", DefaultTraceDir),
+		FaviconDir:    envString("MAKEFASTER_FAVICON_DIR", DefaultFaviconDir),
 		Embeddings:    loadEmbeddings(),
 		Inference:     loadInference(),
 	}

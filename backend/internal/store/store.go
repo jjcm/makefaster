@@ -58,6 +58,27 @@ func (s *Store) Sites(ctx context.Context) ([]leaderboard.SiteRow, error) {
 	return out, rows.Err()
 }
 
+// SiteFavicon returns the favicon URL recorded for one site, or "" when the
+// board has no row for it or the row carries none. A site measured both cold
+// and warm has one row per mode and the same icon on each, so the first row
+// wins.
+//
+// This is what the favicon route resolves a requested path against: the served
+// file's name carries a digest of this URL, so a row that starts pointing
+// somewhere else stops matching the old path instead of serving a stale icon.
+func (s *Store) SiteFavicon(ctx context.Context, host string) (string, error) {
+	var favicon string
+	err := s.db.QueryRowContext(ctx,
+		"SELECT favicon FROM sites WHERE url = ? AND favicon <> '' ORDER BY id LIMIT 1", host).Scan(&favicon)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("query site favicon: %w", err)
+	}
+	return favicon, nil
+}
+
 // Categories returns the improvement leaderboard in rank order.
 func (s *Store) Categories(ctx context.Context) ([]leaderboard.Category, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT `rank`, name, description, `count`, avg_improvement_ms, avg_improvement_pct, icon "+

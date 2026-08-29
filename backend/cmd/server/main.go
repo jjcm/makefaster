@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -16,6 +17,7 @@ import (
 	"makefaster/internal/config"
 	"makefaster/internal/db"
 	"makefaster/internal/embedding"
+	"makefaster/internal/favicon"
 	httpapi "makefaster/internal/http"
 	"makefaster/internal/inference"
 	"makefaster/internal/store"
@@ -74,6 +76,12 @@ func main() {
 	// endpoint answers 503 and the reason is logged once, here.
 	traces := openTraceVault(cfg, pool, logger)
 
+	// The board's icons, downloaded from each site's own origin and served from
+	// here. Also not a reason to refuse to boot: without it the board shows
+	// each site's initial, which is what it already does for a row with no
+	// favicon at all.
+	favicons := openFaviconCache(cfg, leaderboards, logger)
+
 	server := httpapi.NewServer(httpapi.Options{
 		Store:       leaderboards,
 		Embedder:    embedder,
@@ -82,6 +90,7 @@ func main() {
 		Logger:      logger,
 		Inference:   models,
 		Traces:      traces,
+		Favicons:    favicons,
 	})
 
 	logger.Info("makefaster server listening",
@@ -122,4 +131,41 @@ func openTraceVault(cfg config.Config, pool *sql.DB, logger *slog.Logger) *trace
 	logger.Info("chain-of-thought traces are stored privately and served by nothing",
 		"traceDir", vault.Dir())
 	return vault
+}
+
+// openFaviconCache prepares the directory the site leaderboard's icons are
+// downloaded into, or returns nil when this deployment serves none.
+//
+// The configured directory is deliberately outside the repo, which on a
+// developer's machine usually means somewhere unwritable. Rather than dropping
+// the icons from every local board, an unwritable directory falls back to a
+// cache under the system temporary directory: these files are derived from
+// public URLs and are re-downloadable, so losing them on reboot costs nothing.
+// A deployment that wants them to survive one sets MAKEFASTER_FAVICON_DIR.
+func openFaviconCache(cfg config.Config, leaderboards *store.Store, logger *slog.Logger) *favicon.Cache {
+	if !cfg.FaviconsEnabled() {
+		logger.Info("site favicons are off; the board will show each site's initial",
+			"faviconDir", cfg.FaviconDir)
+		return nil
+	}
+	options := favicon.Options{
+		Dir:      cfg.FaviconDir,
+		Resolver: leaderboards.SiteFavicon,
+		Logger:   logger,
+	}
+	cache, err := favicon.New(options)
+	if err != nil {
+		fallback := filepath.Join(os.TempDir(), "makefaster-favicons")
+		logger.Warn("could not prepare the favicon directory; using a temporary one",
+			"faviconDir", cfg.FaviconDir, "fallback", fallback, "error", err)
+		options.Dir = fallback
+		if cache, err = favicon.New(options); err != nil {
+			logger.Warn("could not prepare a favicon directory; the board will show each site's initial",
+				"faviconDir", fallback, "error", err)
+			return nil
+		}
+	}
+	logger.Info("site favicons are downloaded from each origin once and served from this one",
+		"faviconDir", cache.Dir(), "route", favicon.URLPrefix, "size", favicon.Size)
+	return cache
 }
