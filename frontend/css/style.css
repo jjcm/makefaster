@@ -198,8 +198,6 @@ site-header { display: block; }
   padding: 18px 0 6px;
   min-height: 74px;
 }
-/* No ref tab to make room for, so the row is just the gap above the content. */
-.georow--bare { min-height: 30px; }
 
 .ref-tab {
   font-family: var(--font-mono);

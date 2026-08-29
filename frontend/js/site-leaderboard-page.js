@@ -5,7 +5,6 @@
  * Light DOM so css/style.css keeps applying.
  */
 import "./site-header.js";
-import "./geo-row.js";
 import "./spec-footer.js";
 import { getSites } from "./api.js";
 import { escapeHtml, renderPagination, downloadCsv } from "./format.js";
@@ -144,14 +143,7 @@ class SiteLeaderboardPage extends HTMLElement {
         <site-header></site-header>
 
         <div class="sheet-inner">
-          <geo-row bare></geo-row>
-
           <main>
-            <div class="eyebrow">
-              <span class="plus">+</span>
-              <span>Autonomous Performance Research / 001</span>
-            </div>
-
             <div class="page-head">
               <h1 class="page-title">Site leaderboard</h1>
             </div>

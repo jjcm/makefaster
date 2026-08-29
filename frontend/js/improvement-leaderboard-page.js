@@ -5,7 +5,6 @@
  * Light DOM so css/style.css keeps applying.
  */
 import "./site-header.js";
-import "./geo-row.js";
 import "./spec-footer.js";
 import { getImprovements } from "./api.js";
 import { escapeHtml, renderPagination, downloadCsv, mulberry32 } from "./format.js";
@@ -103,15 +102,7 @@ class ImprovementLeaderboardPage extends HTMLElement {
         <site-header></site-header>
 
         <div class="sheet-inner">
-          <geo-row></geo-row>
-
           <main>
-            <div class="eyebrow">
-              <span class="plus">+</span>
-              <span>Autonomous Performance Research / 001</span>
-              <span class="eyebrow-dots dots" aria-hidden="true"></span>
-            </div>
-
             <div class="page-head">
               <h1 class="page-title">Improvement Leaderboard</h1>
               <div class="page-sub">
