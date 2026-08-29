@@ -32,6 +32,14 @@ func FormatTimestamp(t time.Time) string {
 // the JSON when there is none: most rows predate the field, and a row without a
 // PR must not render a dead link.
 //
+// Favicon is the icon's URL at its own origin, as submitted or derived, and it
+// is not what the board loads: FaviconPath is the same-origin path this server
+// serves a downloaded, normalized copy from (see internal/favicon). It is
+// filled in on the way out of GET /data/sites.json rather than stored, and is
+// absent when this deployment caches no icons or the row's URL is not one the
+// server will fetch — in which case the board draws the site's initial rather
+// than hotlinking an origin that may well refuse the request.
+//
 // GenericKeepPct / SiteSpecificKeepPct split the run's kept changes into the
 // ones that were reusable techniques and the ones that were only ever going to
 // matter to this site. They sum to 100 when the run kept anything, and are both
@@ -44,6 +52,7 @@ type SiteRow struct {
 	GenericKeepPct      int     `json:"genericKeepPct,omitempty"`
 	SiteSpecificKeepPct int     `json:"siteSpecificKeepPct,omitempty"`
 	Favicon             string  `json:"favicon"`
+	FaviconPath         string  `json:"faviconPath,omitempty"`
 	LCPBefore           int     `json:"lcpBefore"`
 	LCPRaw              int     `json:"lcpRaw"`
 	LCPDelta            float64 `json:"lcpDelta"`

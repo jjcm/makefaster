@@ -636,7 +636,10 @@ Field notes:
   row's name to it, so a reader can go from the number to the diff. Leave it
   out if there is no PR; the row simply will not be a link.
 - `site.favicon` — a favicon URL if the site has one (`<link rel="icon">` or
-  `/favicon.ico`); it is shown next to the URL on the site leaderboard.
+  `/favicon.ico`); it is shown next to the URL on the site leaderboard. The
+  server downloads it once and serves its own converted copy, so a host that
+  blocks hotlinking is fine — prefer a raster icon (ICO, PNG) over an SVG one,
+  which the board cannot convert and falls back to the site's initial for.
 - `baseline` / `final` — medians per mode. Include the modes you measured;
   `lcpMs` and `ttiMs` are required per included mode (they feed the site
   leaderboard), `fcpMs` / `tbtMs` / `cls` / `score` (0-100 performance score)

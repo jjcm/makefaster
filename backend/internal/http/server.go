@@ -7,6 +7,8 @@
 //	GET  /                          the SPA shell (and every unknown app route)
 //	GET  /data/sites.json           live site-leaderboard rows
 //	GET  /data/improvements.json    live improvement categories
+//	GET  /favicons/<site>-<id>.png  a site's favicon, downloaded from its own
+//	                                origin once and normalized (internal/favicon)
 //	GET  /api/health                { ok, embedder, threshold, inference }
 //	POST /api/submit-site           one measurement run for one site, plus
 //	                                optional private tips for the catalog
@@ -35,6 +37,7 @@ import (
 	"time"
 
 	"makefaster/internal/embedding"
+	"makefaster/internal/favicon"
 	"makefaster/internal/inference"
 	"makefaster/internal/leaderboard"
 	"makefaster/internal/store"
@@ -76,6 +79,11 @@ type Server struct {
 	// deployment collects no traces and POST /api/submit-trace answers 503.
 	traces *trace.Vault
 
+	// favicons downloads and serves the site icons the board shows. Nil is a
+	// supported state too: no /favicons/ route, no faviconPath on the rows, and
+	// the board draws each site's initial instead.
+	favicons *favicon.Cache
+
 	limiter          *rateLimiter
 	inferenceLimiter *rateLimiter
 
@@ -99,6 +107,10 @@ type Options struct {
 	// Traces is optional in the same way: a nil vault means this deployment
 	// stores no chains of thought, and says so.
 	Traces *trace.Vault
+
+	// Favicons is optional: a nil cache means the board renders letters
+	// instead of icons. It never means the page falls back to hotlinking.
+	Favicons *favicon.Cache
 }
 
 func NewServer(opts Options) *Server {
@@ -118,6 +130,7 @@ func NewServer(opts Options) *Server {
 		logger:           logger,
 		inference:        proxy,
 		traces:           opts.Traces,
+		favicons:         opts.Favicons,
 		limiter:          newRateLimiter(rateLimitMaxPosts),
 		inferenceLimiter: newRateLimiter(inferenceRateLimitMax),
 	}
@@ -173,6 +186,13 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 				},
 			})
 		default:
+			// The board's icons: this server's own copies, so the page never
+			// loads an image from a third-party origin that may refuse it.
+			if s.favicons != nil && strings.HasPrefix(r.URL.Path, favicon.URLPrefix) {
+				s.favicons.ServeHTTP(w, r)
+				return
+			}
+
 			// Everything under /api/ that is not a route above is a 404, not
 			// the SPA shell. The write endpoints store things that are never
 			// meant to be read back — private catalog tips, chains of thought —
@@ -212,7 +232,34 @@ func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, rows)
+	s.writeJSON(w, http.StatusOK, s.withServedFavicons(rows))
+}
+
+// withServedFavicons points each row at this server's own copy of its icon and
+// starts the download for the ones that are missing or stale.
+//
+// The response is not allowed to wait on any of that: priming is
+// fire-and-forget, so a board render costs the same whether every icon is
+// already stored or none of them are. A row whose icon has not landed yet gets
+// a 404 from the favicon route and draws its letter, and the next render — or
+// the browser's own request for the image — picks up the stored file.
+//
+// The original URL stays on the row as `favicon`. It is what the download is
+// derived from and what the CLI has always seen; it is simply not what the page
+// loads any more.
+func (s *Server) withServedFavicons(rows []leaderboard.SiteRow) []leaderboard.SiteRow {
+	if s.favicons == nil {
+		return rows
+	}
+	for index := range rows {
+		path := s.favicons.Path(rows[index].URL, rows[index].Favicon)
+		if path == "" {
+			continue
+		}
+		rows[index].FaviconPath = path
+		s.favicons.Prime(rows[index].URL, rows[index].Favicon)
+	}
+	return rows
 }
 
 func (s *Server) handleImprovements(w http.ResponseWriter, r *http.Request) {
@@ -258,6 +305,15 @@ func (s *Server) handleSubmitSite(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.fail(w, err)
 		return
+	}
+
+	// Ingest is the first moment the icon's URL is known, so the download
+	// starts here rather than waiting for somebody to load the board. It runs
+	// in the background: a submission is acknowledged on the strength of its
+	// measurement, never on whether an origin served its favicon.
+	if s.favicons != nil {
+		s.favicons.Prime(row.URL, row.Favicon)
+		row.FaviconPath = s.favicons.Path(row.URL, row.Favicon)
 	}
 
 	// Tips ride along with the submission but are not part of it: the site row
