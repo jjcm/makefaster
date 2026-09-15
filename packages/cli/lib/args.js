@@ -18,7 +18,7 @@ native interface never draws and it never asks you to log in, trust the
 workspace, or approve individual tools.
 
 Options:
-  --cli <cursor|claude|codex>   Skip the picker and use this agent. It must be
+  --cli <cursor|claude|codex|hermes> Skip the picker and use this agent. It must be
                                 installed on this machine: makefaster drives
                                 your own install and hosts no model of its own.
   --model <id>                  Skip the model picker and use this model id.
@@ -40,7 +40,8 @@ Options:
 
 Environment:
   CURSOR_AGENT_EXECUTABLE, CLAUDE_CODE_EXECUTABLE (or BB_CLAUDE_CODE_EXECUTABLE),
-  CODEX_EXECUTABLE               Explicit paths to agent CLI binaries
+  CODEX_EXECUTABLE, MAKEFASTER_HERMES_EXECUTABLE,
+  HERMES_ACP_EXECUTABLE       Explicit paths to agent CLI binaries
   MAKEFASTER_API_BASE            Leaderboard API base
   MAKEFASTER_NO_TUI              Skip the full-screen dashboard
   NO_COLOR                       Disable colors
@@ -58,6 +59,7 @@ const CLI_ALIASES = new Map([
   ["cursor", "cursor"], ["cursor-agent", "cursor"], ["agent", "cursor"],
   ["claude", "claude"], ["claude-code", "claude"], ["claudecode", "claude"],
   ["codex", "codex"],
+  ["hermes", "hermes"], ["hermes-agent", "hermes"],
 ]);
 
 /**
@@ -105,8 +107,8 @@ export function parseArgs(argv) {
           const key = CLI_ALIASES.get(wanted);
           if (key) args.cli = key;
           else if (REMOVED_CLIS.has(wanted)) {
-            errors.push(`--cli ${value} is gone: makefaster no longer hosts a model of its own — use --cli cursor, claude, or codex.`);
-          } else errors.push(`--cli must be one of: cursor, claude, codex (got "${value}")`);
+            errors.push(`--cli ${value} is gone: makefaster no longer hosts a model of its own — use --cli cursor, claude, codex, or hermes.`);
+          } else errors.push(`--cli must be one of: cursor, claude, codex, hermes (got "${value}")`);
         }
         break;
       }

@@ -18,7 +18,7 @@ import {
 test("no hosted model list survives in the catalog", () => {
   assert.equal(models.HOSTED_MODELS, undefined);
   assert.equal(models.resolveHostedModel, undefined);
-  for (const key of ["cursor", "claude", "codex"]) {
+  for (const key of ["cursor", "claude", "codex", "hermes"]) {
     for (const model of modelsForProvider(key)) {
       assert.doesNotMatch(model.id, /ox-alpha|glm-5\.2/, `${key} must not offer ${model.id}`);
     }
@@ -57,7 +57,7 @@ test("benchmarkFamily prefers the longest matching family", () => {
 });
 
 test("no provider offers more than five, and none offers a duplicate", () => {
-  for (const key of ["cursor", "claude", "codex"]) {
+  for (const key of ["cursor", "claude", "codex", "hermes"]) {
     const models = modelsForProvider(key);
     assert.ok(models.length <= MAX_RECOMMENDATIONS, `${key}: ${models.length}`);
     assert.equal(new Set(models.map((m) => m.id)).size, models.length, `${key} has duplicate ids`);
@@ -66,7 +66,7 @@ test("no provider offers more than five, and none offers a duplicate", () => {
 });
 
 test("models sort by CursorBench score, unscored last", () => {
-  for (const key of ["cursor", "claude", "codex"]) {
+  for (const key of ["cursor", "claude", "codex", "hermes"]) {
     const models = modelsForProvider(key);
     const scored = models.filter((m) => m.score !== null);
     const unscored = models.filter((m) => m.score === null);
@@ -136,6 +136,19 @@ test("a live model list fills Codex's fifth slot instead of a guess", () => {
   assert.equal(models[4].label, "GPT-5.2");
 });
 
+test("Hermes uses its live ACP inventory without a copied static catalog", () => {
+  const live = [
+    { id: "custom:local-model", displayName: "Custom Local Model" },
+    { id: "openai-api:gpt-5.6-sol", displayName: "OpenAI GPT-5.6 Sol" },
+  ];
+  const models = modelsForProvider("hermes", { live });
+  assert.deepEqual(models.map((model) => model.id), ["openai-api:gpt-5.6-sol", "custom:local-model"]);
+  assert.equal(models[0].score, 67.2);
+  assert.equal(models[1].score, null);
+  assert.match(models[1].detail, /not in the CursorBench/);
+  assert.equal(modelsForProvider("hermes").length, 0);
+});
+
 test("a live list drops catalog ids the account cannot run", () => {
   // An account without Fable access must not be offered Fable.
   const live = [
@@ -168,6 +181,7 @@ test("the picker default is the top-intelligence model", () => {
   for (const key of ["cursor", "claude", "codex"]) {
     assert.equal(defaultModelFor(key).score, Math.max(...modelsForProvider(key).map((m) => m.score ?? -1)));
   }
+  assert.equal(defaultModelFor("hermes"), null, "Hermes has no static catalog");
 });
 
 test("resolveModel matches the catalog and passes anything else through", () => {

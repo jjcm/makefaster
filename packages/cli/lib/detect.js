@@ -19,7 +19,8 @@
  *      npm-global installs) — skipped when running as root so a user-writable
  *      binary is never picked up with elevated privileges (root can still use
  *      the env overrides);
- *   4. config-home hints (~/.cursor, ~/.claude, CODEX_HOME or ~/.codex) are
+ *   4. config-home hints (~/.cursor, ~/.claude, CODEX_HOME/~/.codex or
+ *      HERMES_HOME/~/.hermes) are
  *      reported as evidence ("config found, binary missing") but never launch
  *      anything by themselves.
  */
@@ -84,6 +85,26 @@ export const PROVIDERS = [
     homeHints: ({ home, env }) => [env.CODEX_HOME || join(home, ".codex")],
     install: "npm install -g @openai/codex",
     signIn: "codex login",
+  },
+  {
+    key: "hermes",
+    displayName: "Hermes Agent",
+    // Recent installs expose both launchers. Prefer hermes-acp when it is
+    // present because it is already the dedicated non-interactive entrypoint;
+    // older installs still use `hermes acp`.
+    executables: ["hermes-acp", "hermes"],
+    envOverrides: ["MAKEFASTER_HERMES_EXECUTABLE", "HERMES_EXECUTABLE", "HERMES_ACP_EXECUTABLE"],
+    wellKnown: ({ home }) => [
+      join(home, ".local", "bin", "hermes-acp"),
+      join(home, ".local", "bin", "hermes"),
+      "/opt/homebrew/bin/hermes-acp",
+      "/opt/homebrew/bin/hermes",
+      "/usr/local/bin/hermes-acp",
+      "/usr/local/bin/hermes",
+    ],
+    homeHints: ({ home, env }) => [env.HERMES_HOME || join(home, ".hermes")],
+    install: "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
+    signIn: "hermes setup",
   },
 ];
 
@@ -267,7 +288,8 @@ export function missingCliGuidance(reports) {
   lines.push(
     "If your CLI lives somewhere unusual, point makefaster at it with",
     "CURSOR_AGENT_EXECUTABLE, CLAUDE_CODE_EXECUTABLE (BB_CLAUDE_CODE_EXECUTABLE",
-    "works too), or CODEX_EXECUTABLE.",
+    "works too), CODEX_EXECUTABLE, MAKEFASTER_HERMES_EXECUTABLE, or",
+    "HERMES_ACP_EXECUTABLE.",
   );
   return lines.join("\n");
 }

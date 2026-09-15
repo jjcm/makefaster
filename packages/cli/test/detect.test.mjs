@@ -34,12 +34,13 @@ function detect({ env = {}, home, isRoot = false, probeVersion = quietProbe } = 
   });
 }
 
-test("finds all three installed providers on PATH", () => {
+test("finds all four installed providers on PATH", () => {
   const { root, bin, home } = makeSandbox();
   try {
     fakeBinary(bin, "cursor-agent");
     fakeBinary(bin, "claude");
     fakeBinary(bin, "codex");
+    fakeBinary(bin, "hermes");
     const reports = detect({ env: { PATH: bin }, home });
     for (const report of reports) {
       assert.equal(report.found, true, `${report.key} should be found`);
@@ -58,8 +59,8 @@ test("only the local CLIs are offered, and none of them is found without being d
   const { root, bin, home } = makeSandbox();
   try {
     const reports = detect({ env: { PATH: bin }, home });
-    assert.deepEqual(reports.map((r) => r.key), ["cursor", "claude", "codex"]);
-    assert.deepEqual(reports.map((r) => r.found), [false, false, false]);
+    assert.deepEqual(reports.map((r) => r.key), ["cursor", "claude", "codex", "hermes"]);
+    assert.deepEqual(reports.map((r) => r.found), [false, false, false, false]);
     for (const report of reports) {
       assert.equal(report.hosted, undefined, `${report.key} must carry no hosted flag`);
       assert.equal(report.hostedModels, undefined, `${report.key} must carry no hosted model list`);
@@ -180,6 +181,20 @@ test("a symlinked `agent` resolving into a cursor install is accepted without pr
   }
 });
 
+test("Hermes config-home hints surface when the binary is missing", () => {
+  const { root, home } = makeSandbox();
+  try {
+    mkdirSync(join(home, ".hermes"), { recursive: true });
+    const reports = detect({ home });
+    const hermes = reports.find((r) => r.key === "hermes");
+    assert.equal(hermes.found, false);
+    assert.match(hermes.hint, /\.hermes/);
+    assert.match(hermes.hint, /no runnable binary/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("config-home hints surface when the binary is missing", () => {
   const { root, home } = makeSandbox();
   try {
@@ -203,7 +218,8 @@ test("missingCliGuidance names every installer and does not offer a bundled mode
     assert.match(guidance, /cursor\.com\/install/);
     assert.match(guidance, /claude\.ai\/install\.sh/);
     assert.match(guidance, /npm install -g @openai\/codex/);
-    assert.match(guidance, /CLAUDE_CODE_EXECUTABLE/);
+    assert.match(guidance, /hermes-agent.nousresearch.com\/install\.sh/);
+    assert.match(guidance, /MAKEFASTER_HERMES_EXECUTABLE/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

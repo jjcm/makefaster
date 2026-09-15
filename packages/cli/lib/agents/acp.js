@@ -105,6 +105,14 @@ export async function runAcpSession({ provider, prompt, cwd, model = null, env =
     const sessionId = session?.sessionId;
     if (typeof sessionId !== "string") throw new Error(`${provider.displayName} did not return an ACP session id`);
 
+    if (provider.key === "hermes" && model) {
+      await connection.request({
+        method: "session/set_model",
+        params: { sessionId, modelId: model.id ?? model },
+        timeoutMs: HANDSHAKE_TIMEOUT_MS,
+      });
+    }
+
     const result = await connection.request({
       method: "session/prompt",
       params: { sessionId, prompt: [{ type: "text", text: prompt }] },

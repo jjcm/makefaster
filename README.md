@@ -31,10 +31,12 @@ What happens:
 1. **Finds the agent CLIs you already have.** Detected via PATH, well-known
    install locations (`~/.local/bin`, `~/.claude/local`, `~/.cursor/bin`,
    Homebrew…) and explicit env overrides (`CURSOR_AGENT_EXECUTABLE`,
-   `CLAUDE_CODE_EXECUTABLE` / `BB_CLAUDE_CODE_EXECUTABLE`, `CODEX_EXECUTABLE`):
-   Cursor Agent (`cursor-agent`/`agent`), Claude Code (`claude`), Codex
-   (`codex`). makefaster never bundles, downloads, or hosts a model — with none
-   of the three installed there is nothing to run the loop with, and it says so
+   `CLAUDE_CODE_EXECUTABLE` / `BB_CLAUDE_CODE_EXECUTABLE`,
+   `CODEX_EXECUTABLE`, `MAKEFASTER_HERMES_EXECUTABLE` or
+   `HERMES_ACP_EXECUTABLE`): Cursor Agent (`cursor-agent`/`agent`), Claude Code
+   (`claude`), Codex (`codex`), and Hermes Agent (`hermes`/`hermes-acp`).
+   makefaster never bundles, downloads, or hosts a model —
+   with none installed there is nothing to run the loop with, and it says so
    with the install commands rather than starting.
 2. **Asks you to pick** — only the CLIs that were actually found, and before
    anything runs.
@@ -81,7 +83,8 @@ What happens:
 
 ```text
 Usage: npx makefaster [dir] [options]
-  --cli <cursor|claude|codex>   Skip the picker and use this agent (it has to
+  --cli <cursor|claude|codex|hermes>
+                                Skip the picker and use this agent (it has to
                                 be installed on this machine)
   --model <id>                  Skip the model picker
   --url <example.com>           Site URL for the leaderboard submission
@@ -185,13 +188,15 @@ trust, and per-tool permission.
 | Cursor Agent | `cursor-agent --model <id> acp` — Agent Client Protocol over stdio |
 | Claude Code | `@anthropic-ai/claude-agent-sdk` `query()`, which owns the CLI pipe itself; print mode is the zero-dependency fallback |
 | Codex | `codex app-server` — JSON-RPC; the model rides `thread/start` |
+| Hermes Agent | `hermes-acp` (or `hermes acp` on older installs) — Agent Client Protocol over stdio; the model rides `session/set_model` |
 
 `--model` is a *global* Cursor option, so it precedes the `acp` subcommand.
-Cursor has no permission flag at all — `--force`, `--yolo` and `--always-approve`
-belong to other agents — and neither does the app-server. So **makefaster answers
-the child's permission requests itself**: ACP `session/request_permission`,
-Claude's `canUseTool`, and Codex's three `requestApproval` methods. Without that
-a hidden child would block forever on a question with no UI to ask it in.
+Cursor and Hermes have no permission flag for this path — `--force`, `--yolo`
+and `--always-approve` belong to other agents — and neither does the app-server.
+So **makefaster answers the child's permission requests itself**: ACP
+`session/request_permission` for Cursor and Hermes, Claude's `canUseTool`, and
+Codex's three `requestApproval` methods. Without that a hidden child would block
+forever on a question with no UI to ask it in.
 
 Claude Code is the one provider where a protocol client is a dependency rather
 than a subprocess, so the Agent SDK is an optional peer: if it resolves,
@@ -221,8 +226,8 @@ Lighthouse flags from the agent.
 ### Credentials are reused, never supplied
 
 makefaster never runs a `login` subcommand, never opens a login browser, and
-never prints a device code. It also **never injects an API key**: `ANTHROPIC_API_KEY`,
-`CURSOR_API_KEY` and `OPENAI_API_KEY` are not set by makefaster, because an
+never prints a device code. It also **never injects an API key**: `ANTHROPIC_API_KEY`, `CURSOR_API_KEY`,
+`OPENAI_API_KEY` and `HERMES_API_KEY` are not set by makefaster, because an
 injected key fights the OAuth credentials the CLI already stored and can itself
 cause prompts. The child inherits your credential environment untouched and
 finds `~/.claude`, `~/.cursor` and `CODEX_HOME`/`~/.codex` exactly as the native
@@ -242,20 +247,24 @@ intelligence. The ranking is the CursorBench 3.2 snapshot (captured 2026-07-16)
 that [`jjcm/bb-plugin-autorouter`](https://github.com/jjcm/bb-plugin-autorouter/blob/main/benchmarks.ts)
 carries as `CURSOR_BENCHMARKS`, reduced to the best score per model family.
 
-The three CLIs do not share an id namespace, so the catalog does not either:
+The providers do not share an id namespace, so the catalog does not either:
 
-| | Cursor | Claude Code | Codex |
-|---|---|---|---|
-| 1 | `claude-fable-5-thinking-medium` — 70.5 | `claude-fable-5` — 70.5 | `gpt-5.6-sol` — 67.2 |
-| 2 | `gpt-5.6-sol-medium` — 67.2 | `claude-opus-4-8[1m]` — 62.3 | `gpt-5.6-terra` — 64.9 |
-| 3 | `gpt-5.6-terra-medium` — 64.9 | `claude-sonnet-5` — 61.5 | `gpt-5.6-luna` — 61.1 |
-| 4 | `claude-opus-4-8-thinking-medium` — 62.3 | `claude-opus-5[1m]` — unranked | `gpt-5.5` — 58.4 |
-| 5 | `claude-sonnet-5-thinking-medium` — 61.5 | `claude-opus-4-7[1m]` — unranked | *live list only* |
+| | Cursor | Claude Code | Codex | Hermes Agent |
+|---|---|---|---|---|
+| 1 | `claude-fable-5-thinking-medium` — 70.5 | `claude-fable-5` — 70.5 | `gpt-5.6-sol` — 67.2 | live ACP inventory |
+| 2 | `gpt-5.6-sol-medium` — 67.2 | `claude-opus-4-8[1m]` — 62.3 | `gpt-5.6-terra` — 64.9 | live ACP inventory |
+| 3 | `gpt-5.6-terra-medium` — 64.9 | `claude-sonnet-5` — 61.5 | `gpt-5.6-luna` — 61.1 | live ACP inventory |
+| 4 | `claude-opus-4-8-thinking-medium` — 62.3 | `claude-opus-5[1m]` — unranked | `gpt-5.5` — 58.4 | live ACP inventory |
+| 5 | `claude-sonnet-5-thinking-medium` — 61.5 | `claude-opus-4-7[1m]` — unranked | *live list only* | live ACP inventory |
 
 Cursor ids are **variants**: family plus reasoning effort plus an optional
 `-fast` twin, and bb's primaries pin medium. Claude Code ids carry **no effort
 suffix** — reasoning is a separate field — and a bracketed context parameter such
-as `[1m]` is part of the id. Codex ids are plain families.
+as `[1m]` is part of the id. Codex ids are plain families. Hermes returns
+provider-qualified ids from its ACP `session/new` response; makefaster shows the
+user's live configured inventory, ranks any recognized families, and passes the
+selected id back with ACP `session/set_model`. It never copies Hermes credentials
+or maintains a stale Hermes model catalog.
 
 The score ranks the model *family*, not the exact variant, because that is what
 the snapshot supports: it scores family-by-effort pairs and this keeps each
@@ -263,10 +272,11 @@ family's best. The picker says so rather than printing an effort next to an id
 that pins a different one.
 
 Where makefaster can ask the CLI what the account can actually run, it does, and
-reconciles: `cursor-agent --list-models` for Cursor and `model/list` on the
-app-server for Codex. Ids the CLI does not list are dropped, so an account
-without Fable access is not offered Fable. Claude Code needs no probe — bb's
-curated catalog is already exactly the five rows its own catalog filters to.
+reconciles: `cursor-agent --list-models` for Cursor, `model/list` on the
+app-server for Codex, and `session/new` over ACP for Hermes. Ids the CLI does not
+list are dropped, so an account without Fable access is not offered Fable. Claude
+Code needs no probe — bb's curated catalog is already exactly the five rows its
+own catalog filters to.
 
 Only four OpenAI families are scored, so Codex shows four unless a live list
 supplies a fifth. Families the snapshot does not score — Opus 5 and Grok 4.6 are
@@ -522,7 +532,7 @@ both and neither are too — the trace records which happened
 reading also went on a board. Nothing is ever auto-uploaded: the prompt defaults
 to no and takes an explicit yes.
 
-**What the CLI sends.** The reasoning text and nothing else. All three providers
+**What the CLI sends.** The reasoning text and nothing else. All four providers
 stream reasoning, and makefaster otherwise collapses every bit of it into
 the word `thinking` on the way to the progress line, so
 [`packages/cli/lib/thinkingTrace.js`](packages/cli/lib/thinkingTrace.js) reads

@@ -186,8 +186,9 @@ export function continuePrompt(plan) {
 /**
  * Run one round of the loop in the chosen agent CLI, hidden.
  *
- * Each provider is a non-TTY protocol child (see lib/invoke.js): ACP for Cursor,
- * the Agent SDK for Claude Code, `codex app-server` for Codex. None of them
+ * Each provider is a non-TTY protocol child (see lib/invoke.js): ACP for Cursor
+ * and Hermes, the Agent SDK for Claude Code, and `codex app-server` for Codex.
+ * None of them
  * inherits this terminal and none is the product's interactive CLI, so nothing
  * the child does can draw over makefaster or ask the user a question — which is
  * also why each agent module answers the child's permission and approval
@@ -213,6 +214,7 @@ export async function runAgent({ provider, prompt, cwd, model = null, env = proc
     cursor: runAcpSession,
     claude: runClaudeSession,
     codex: runCodexSession,
+    hermes: runAcpSession,
   };
   const runner = runners[provider.key];
   if (!runner) throw new Error(`no protocol runner is defined for provider "${provider.key}"`);

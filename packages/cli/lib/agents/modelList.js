@@ -8,9 +8,10 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { childEnv, isAuthRequiredError } from "../invoke.js";
+import { buildAgentSpawn, childEnv, isAuthRequiredError } from "../invoke.js";
 import { parseCursorModelList } from "../models.js";
 import { listCodexModels } from "./codexAppServer.js";
+import { createJsonRpcChild } from "../jsonrpc.js";
 
 const LIST_TIMEOUT_MS = 20_000;
 
@@ -54,11 +55,61 @@ export async function listModels({ provider, cwd, env = process.env }) {
       } catch (error) {
         return { models: null, authRequired: isAuthRequiredError(error), detail: error.message };
       }
+    case "hermes":
+      return listHermesModels({ provider, cwd, env });
     // Claude Code's list needs an Agent SDK probe, and bb's curated catalog is
     // already exactly the five rows that catalog filters down to. Asking would
     // spawn a CLI to learn nothing new.
     default:
       return { models: null, authRequired: false, detail: null };
+  }
+}
+
+/**
+ * Hermes publishes the user's configured provider/model inventory as part of
+ * ACP `session/new`. This keeps makefaster's picker live without copying or
+ * exposing Hermes credentials or maintaining a second model catalog.
+ */
+export async function listHermesModels({ provider, cwd, env = process.env, timeoutMs = LIST_TIMEOUT_MS }) {
+  const spawnSpec = buildAgentSpawn({ provider, cwd, env });
+  const connection = createJsonRpcChild({
+    command: spawnSpec.command,
+    args: spawnSpec.args,
+    cwd,
+    env: spawnSpec.options.env,
+    label: `${provider.displayName} (acp model list)`,
+    onRequest: (_method, _params, responder) => responder.error(-32601, "model-list child serves no requests"),
+  });
+  try {
+    await connection.request({
+      method: "initialize",
+      params: {
+        protocolVersion: 1,
+        clientInfo: { name: "makefaster", version: "1.0.0" },
+        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+      },
+      timeoutMs,
+    });
+    const session = await connection.request({
+      method: "session/new",
+      params: { cwd, mcpServers: [] },
+      timeoutMs,
+    });
+    const entries = session?.models?.availableModels;
+    const models = Array.isArray(entries)
+      ? entries
+        .filter((entry) => entry && typeof entry.modelId === "string" && entry.modelId.trim() !== "")
+        .map((entry) => ({ id: entry.modelId, displayName: entry.name || entry.modelId }))
+      : [];
+    return { models: models.length > 0 ? models : null, authRequired: false, detail: null };
+  } catch (error) {
+    return {
+      models: null,
+      authRequired: isAuthRequiredError(error, connection.stderrTail),
+      detail: error.message,
+    };
+  } finally {
+    connection.kill();
   }
 }
 

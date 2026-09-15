@@ -15,6 +15,7 @@ const PROVIDERS = {
   cursor: { key: "cursor", displayName: "Cursor Agent", executablePath: "/usr/local/bin/cursor-agent", signIn: "cursor-agent login" },
   claude: { key: "claude", displayName: "Claude Code", executablePath: "/usr/local/bin/claude", signIn: "claude auth login" },
   codex: { key: "codex", displayName: "Codex", executablePath: "/usr/local/bin/codex", signIn: "codex login" },
+  hermes: { key: "hermes", displayName: "Hermes Agent", executablePath: "/usr/local/bin/hermes", signIn: "hermes setup" },
 };
 
 const ENV = { HOME: "/home/dev", PATH: "/usr/bin" };
@@ -69,6 +70,21 @@ test("codex launches the app-server and pins no model on the command line", () =
   assert.ok(!spec.args.includes("exec"));
   assert.ok(!spec.args.includes("--full-auto"));
   assert.ok(!spec.args.includes("--sandbox"));
+});
+
+test("Hermes launches its native ACP server and keeps model ids off argv", () => {
+  const spec = spawnFor("hermes", { model: "custom:cx/gpt-5.6-luna" });
+  assert.equal(spec.protocol, "acp");
+  assert.equal(spec.command, "/usr/local/bin/hermes");
+  assert.deepEqual(spec.args, ["acp"]);
+  assert.ok(!spec.args.includes("--model"));
+
+  const dedicated = spawnFor("hermes", {
+    model: "custom:cx/gpt-5.6-luna",
+    provider: { ...PROVIDERS.hermes, executablePath: "/usr/local/bin/hermes-acp" },
+  });
+  assert.equal(dedicated.protocol, "acp");
+  assert.deepEqual(dedicated.args, []);
 });
 
 test("no provider argv can start a login, a browser, or a device-code flow", () => {

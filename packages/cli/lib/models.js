@@ -10,7 +10,7 @@
  * best score per family, which is what "most intelligent" means here. To
  * refresh the ranking, re-read that file and update FAMILY_BEST.
  *
- * The three providers do not share a model-id namespace, and none of the ids
+ * The providers do not share a model-id namespace, and none of the ids
  * here is invented:
  *
  *   Cursor       ids are *variants*: family plus reasoning effort plus an
@@ -23,6 +23,8 @@
  *                catalog (plugins/provider-claude-code/src/model-catalog-data.ts),
  *                which is exactly five rows.
  *   Codex        plain family ids from the app-server's `model/list`.
+ *   Hermes       provider-qualified ids from ACP `session/new`; its live
+ *                inventory is the source of truth and is never duplicated here.
  *
  * A family the snapshot does not score is never given a made-up number: it
  * sorts after every scored model and says so. Codex only has four scored
@@ -96,6 +98,8 @@ const CANDIDATES = {
     { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
     { id: "gpt-5.5", label: "GPT-5.5" },
   ],
+  // Hermes owns this catalog and supplies it live over ACP.
+  hermes: [],
 };
 
 export const MAX_RECOMMENDATIONS = 5;
@@ -142,15 +146,14 @@ function byIntelligence(a, b) {
  * remaining slots are filled from the live list. Without one, the static
  * catalog stands.
  *
- * @param {"cursor"|"claude"|"codex"} providerKey
+ * @param {"cursor"|"claude"|"codex"|"hermes"} providerKey
  * @param {{live?: Array<{id: string, displayName?: string}>|null}} [options]
  * @returns {Array<{id: string, label: string, score: number|null, family: string|null, reasoning: string|null, detail: string}>}
  */
 export function modelsForProvider(providerKey, { live = null } = {}) {
   const candidates = CANDIDATES[providerKey] || [];
-  if (candidates.length === 0) return [];
-
   const liveIds = Array.isArray(live) && live.length > 0 ? new Map(live.map((entry) => [entry.id.toLowerCase(), entry])) : null;
+  if (candidates.length === 0 && !liveIds) return [];
 
   let offered = candidates.map(annotate);
   if (liveIds) {

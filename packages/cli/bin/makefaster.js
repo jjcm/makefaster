@@ -2,7 +2,7 @@
 /**
  * npx makefaster — run the autoresearch performance loop against the site in
  * the current directory, driving an agent CLI you already have installed
- * (Cursor Agent, Claude Code, or Codex). The agent CLI is driven as a hidden
+ * (Cursor Agent, Claude Code, Codex, or Hermes Agent). The agent CLI is driven as a hidden
  * worker: see packages/cli/lib/invoke.js for why nothing inherits this
  * terminal, packages/skill/SKILL.md for the loop itself, and README.md for the
  * full flow.
