@@ -11,8 +11,7 @@ handed you this repo. The loop is identical whichever one you are, and so is
 this file. Supported providers are Cursor Agent, Claude Code, Codex, and Hermes
 Agent. `state.json` records which one you are.
 
-Hermes runs through its native `hermes-acp` launcher (or `hermes acp` on older
-installs) using the Agent Client Protocol server. Treat
+Hermes runs through the native `hermes acp` Agent Client Protocol server. Treat
 it like the other hidden protocol workers: do not launch a second Hermes process,
 do not invoke Claude, Cursor, or Codex as a fallback, and keep all progress in
 `.makefaster/results.json` and `.makefaster/thinking.log`.

@@ -40,8 +40,8 @@ Options:
 
 Environment:
   CURSOR_AGENT_EXECUTABLE, CLAUDE_CODE_EXECUTABLE (or BB_CLAUDE_CODE_EXECUTABLE),
-  CODEX_EXECUTABLE, MAKEFASTER_HERMES_EXECUTABLE,
-  HERMES_ACP_EXECUTABLE       Explicit paths to agent CLI binaries
+  CODEX_EXECUTABLE, MAKEFASTER_HERMES_EXECUTABLE
+                                Explicit paths to agent CLI binaries
   MAKEFASTER_API_BASE            Leaderboard API base
   MAKEFASTER_NO_TUI              Skip the full-screen dashboard
   NO_COLOR                       Disable colors

@@ -89,17 +89,14 @@ export const PROVIDERS = [
   {
     key: "hermes",
     displayName: "Hermes Agent",
-    // Recent installs expose both launchers. Prefer hermes-acp when it is
-    // present because it is already the dedicated non-interactive entrypoint;
-    // older installs still use `hermes acp`.
-    executables: ["hermes-acp", "hermes"],
-    envOverrides: ["MAKEFASTER_HERMES_EXECUTABLE", "HERMES_EXECUTABLE", "HERMES_ACP_EXECUTABLE"],
+    // Use the native CLI entrypoint and append its ACP subcommand at launch.
+    // Do not detect the separate hermes-acp launcher: it is a shell wrapper,
+    // while makefaster's provider contract is explicitly `hermes acp`.
+    executables: ["hermes"],
+    envOverrides: ["MAKEFASTER_HERMES_EXECUTABLE", "HERMES_EXECUTABLE"],
     wellKnown: ({ home }) => [
-      join(home, ".local", "bin", "hermes-acp"),
       join(home, ".local", "bin", "hermes"),
-      "/opt/homebrew/bin/hermes-acp",
       "/opt/homebrew/bin/hermes",
-      "/usr/local/bin/hermes-acp",
       "/usr/local/bin/hermes",
     ],
     homeHints: ({ home, env }) => [env.HERMES_HOME || join(home, ".hermes")],
@@ -289,7 +286,7 @@ export function missingCliGuidance(reports) {
     "If your CLI lives somewhere unusual, point makefaster at it with",
     "CURSOR_AGENT_EXECUTABLE, CLAUDE_CODE_EXECUTABLE (BB_CLAUDE_CODE_EXECUTABLE",
     "works too), CODEX_EXECUTABLE, MAKEFASTER_HERMES_EXECUTABLE, or",
-    "HERMES_ACP_EXECUTABLE.",
+    "HERMES_EXECUTABLE.",
   );
   return lines.join("\n");
 }

@@ -32,9 +32,9 @@ What happens:
    install locations (`~/.local/bin`, `~/.claude/local`, `~/.cursor/bin`,
    Homebrew…) and explicit env overrides (`CURSOR_AGENT_EXECUTABLE`,
    `CLAUDE_CODE_EXECUTABLE` / `BB_CLAUDE_CODE_EXECUTABLE`,
-   `CODEX_EXECUTABLE`, `MAKEFASTER_HERMES_EXECUTABLE` or
-   `HERMES_ACP_EXECUTABLE`): Cursor Agent (`cursor-agent`/`agent`), Claude Code
-   (`claude`), Codex (`codex`), and Hermes Agent (`hermes`/`hermes-acp`).
+   `CODEX_EXECUTABLE`, `MAKEFASTER_HERMES_EXECUTABLE`): Cursor Agent
+   (`cursor-agent`/`agent`), Claude Code (`claude`), Codex (`codex`), and Hermes
+   Agent (`hermes`).
    makefaster never bundles, downloads, or hosts a model —
    with none installed there is nothing to run the loop with, and it says so
    with the install commands rather than starting.
@@ -188,7 +188,7 @@ trust, and per-tool permission.
 | Cursor Agent | `cursor-agent --model <id> acp` — Agent Client Protocol over stdio |
 | Claude Code | `@anthropic-ai/claude-agent-sdk` `query()`, which owns the CLI pipe itself; print mode is the zero-dependency fallback |
 | Codex | `codex app-server` — JSON-RPC; the model rides `thread/start` |
-| Hermes Agent | `hermes-acp` (or `hermes acp` on older installs) — Agent Client Protocol over stdio; the model rides `session/set_model` |
+| Hermes Agent | `hermes acp` — Agent Client Protocol over stdio; the model rides `session/set_model` |
 
 `--model` is a *global* Cursor option, so it precedes the `acp` subcommand.
 Cursor and Hermes have no permission flag for this path — `--force`, `--yolo`

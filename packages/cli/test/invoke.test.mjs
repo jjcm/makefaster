@@ -79,12 +79,6 @@ test("Hermes launches its native ACP server and keeps model ids off argv", () =>
   assert.deepEqual(spec.args, ["acp"]);
   assert.ok(!spec.args.includes("--model"));
 
-  const dedicated = spawnFor("hermes", {
-    model: "custom:cx/gpt-5.6-luna",
-    provider: { ...PROVIDERS.hermes, executablePath: "/usr/local/bin/hermes-acp" },
-  });
-  assert.equal(dedicated.protocol, "acp");
-  assert.deepEqual(dedicated.args, []);
 });
 
 test("no provider argv can start a login, a browser, or a device-code flow", () => {

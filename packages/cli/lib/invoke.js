@@ -15,9 +15,8 @@
  *                pipe itself. Print mode is only the zero-dependency fallback.
  *   Codex        `codex app-server` — JSON-RPC; the model is set on
  *                `thread/start`, not on the command line.
- *   Hermes       `hermes-acp` (or `hermes acp` on older installs) — Agent
- *                Client Protocol over stdio; the model is set on
- *                `session/set_model` after `session/new`.
+ *   Hermes       `hermes acp` — Agent Client Protocol over stdio; the model is
+ *                set on `session/set_model` after `session/new`.
  *
  * Credentials are reused, never created or supplied:
  *
@@ -79,13 +78,11 @@ export function buildAgentSpawn({ provider, model = null, cwd, env = process.env
       // The model rides thread/start; nothing about it belongs in argv.
       return { command: provider.executablePath, args: ["app-server"], options, protocol: "codex-app-server" };
 
-    case "hermes": {
-      // Recent installs provide `hermes-acp`; older installs use `hermes acp`.
-      // Detection preserves the selected executable, so both paths remain
-      // explicit and no wrapper or fallback agent is introduced.
-      const args = /(?:^|[\\/])hermes-acp(?:\\.exe)?$/i.test(provider.executablePath) ? [] : ["acp"];
-      return { command: provider.executablePath, args, options, protocol: "acp" };
-    }
+    case "hermes":
+      // Hermes owns model selection inside its ACP session. Do not put the
+      // model in argv: its model ids may contain provider prefixes and other
+      // punctuation. Always use the native CLI's ACP subcommand.
+      return { command: provider.executablePath, args: ["acp"], options, protocol: "acp" };
 
     case "claude":
       // The Agent SDK spawns the CLI itself; this is the print-mode fallback's
