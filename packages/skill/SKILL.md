@@ -8,7 +8,13 @@ description: Autoresearch loop that makes the site in this repo measurably faste
 You are running inside a makefaster session: the `makefaster` CLI asked the user
 which of the agent CLIs installed on their machine should run the loop, and
 handed you this repo. The loop is identical whichever one you are, and so is
-this file. `state.json` records which one you are.
+this file. Supported providers are Cursor Agent, Claude Code, Codex, and Hermes
+Agent. `state.json` records which one you are.
+
+Hermes runs through the native `hermes acp` Agent Client Protocol server. Treat
+it like the other hidden protocol workers: do not launch a second Hermes process,
+do not invoke Claude, Cursor, or Codex as a fallback, and keep all progress in
+`.makefaster/results.json` and `.makefaster/thinking.log`.
 
 Your job is to make the site in the current directory measurably faster for real
 users, one disciplined experiment at a time. The discipline is the same as

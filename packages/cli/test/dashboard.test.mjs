@@ -198,6 +198,19 @@ test("allocateHeights honours the panel floors and never overruns the terminal",
   assert.ok(allocateHeights(40).chart > 0 && allocateHeights(40).log > 0);
 });
 
+test("the dashboard identifies Hermes through the shared provider metadata", () => {
+  const frame = text(buildDashboard({
+    size: { columns: 120, rows: 24 },
+    results: RESULTS,
+    state: STATE,
+    provider: { key: "hermes", displayName: "Hermes Agent" },
+    model: { id: "custom:local-model", label: "Custom Local Model" },
+    log: [],
+  }));
+  assert.match(frame, /model: custom:local-model/);
+  assert.match(frame, /cli: Hermes Agent \(hidden\)/);
+});
+
 test("buildDashboard fills exactly the terminal it was given", () => {
   for (const size of [{ columns: 80, rows: 24 }, { columns: 120, rows: 40 }, { columns: 200, rows: 60 }]) {
     const rows = buildDashboard({ size, results: RESULTS, log: [] });

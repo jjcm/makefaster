@@ -1,7 +1,7 @@
 {
   "name": "makefaster",
   "version": "0.1.2",
-  "description": "AI skill that runs an autoresearch loop to make your site measurably faster. `npx makefaster` drives the agent CLI you already have (Cursor, Claude Code, or Codex) through profile -> hypothesis -> measure -> keep/revert iterations, then submits results to the public leaderboards.",
+  "description": "AI skill that runs an autoresearch loop to make your site measurably faster. `npx makefaster` drives the agent CLI you already have (Cursor, Claude Code, Codex, or Hermes Agent) through profile -> hypothesis -> measure -> keep/revert iterations, then submits results to the public leaderboards.",
   "type": "module",
   "bin": {
     "makefaster": "packages/cli/bin/makefaster.js"

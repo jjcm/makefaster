@@ -15,13 +15,15 @@
  *                pipe itself. Print mode is only the zero-dependency fallback.
  *   Codex        `codex app-server` — JSON-RPC; the model is set on
  *                `thread/start`, not on the command line.
+ *   Hermes       `hermes acp` — Agent Client Protocol over stdio; the model is
+ *                set on `session/set_model` after `session/new`.
  *
  * Credentials are reused, never created or supplied:
  *
  * - No `login` subcommand is ever run, no login browser is opened, and no
  *   device code is printed.
- * - No API key is injected. ANTHROPIC_API_KEY, CURSOR_API_KEY and
- *   OPENAI_API_KEY are never set by makefaster — an injected key fights the
+ * - No API key is injected. ANTHROPIC_API_KEY, CURSOR_API_KEY, OPENAI_API_KEY
+ *   and HERMES_API_KEY are never set by makefaster — an injected key fights the
  *   OAuth credentials the CLI already stored and can itself cause prompts. The
  *   child inherits the user's environment untouched, so it finds ~/.claude,
  *   ~/.cursor and CODEX_HOME/~/.codex exactly as the native CLI does.
@@ -40,7 +42,7 @@ export const PROTOCOL_STDIO = ["pipe", "pipe", "pipe"];
 /** Keys makefaster must never set; an injected key can fight stored OAuth. */
 export const NEVER_INJECTED_ENV = [
   "ANTHROPIC_API_KEY", "CURSOR_API_KEY", "OPENAI_API_KEY", "CLAUDE_API_KEY",
-  "CODEX_API_KEY",
+  "CODEX_API_KEY", "HERMES_API_KEY",
 ];
 
 /**
@@ -75,6 +77,12 @@ export function buildAgentSpawn({ provider, model = null, cwd, env = process.env
     case "codex":
       // The model rides thread/start; nothing about it belongs in argv.
       return { command: provider.executablePath, args: ["app-server"], options, protocol: "codex-app-server" };
+
+    case "hermes":
+      // Hermes owns model selection inside its ACP session. Do not put the
+      // model in argv: its model ids may contain provider prefixes and other
+      // punctuation. Always use the native CLI's ACP subcommand.
+      return { command: provider.executablePath, args: ["acp"], options, protocol: "acp" };
 
     case "claude":
       // The Agent SDK spawns the CLI itself; this is the print-mode fallback's

@@ -14,6 +14,7 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runAcpSession } from "../lib/agents/acp.js";
+import { listHermesModels } from "../lib/agents/modelList.js";
 import { runCodexSession, listCodexModels } from "../lib/agents/codexAppServer.js";
 import { runAgent } from "../lib/session.js";
 
@@ -75,7 +76,18 @@ createInterface({ input: process.stdin, terminal: false }).on("line", async (lin
       send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1, agentCapabilities: { promptCapabilities: { image: false } } } });
       return;
     case "session/new":
-      send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "fake-session-1" } });
+      send({ jsonrpc: "2.0", id: message.id, result: {
+        sessionId: "fake-session-1",
+        models: { availableModels: [
+          { modelId: "custom:local-model", name: "Custom Local Model" },
+          { modelId: "openai-api:gpt-5.6-sol", name: "OpenAI GPT-5.6 Sol" },
+        ] },
+      } });
+      return;
+    case "session/set_model":
+      report.selectedModel = message.params.modelId;
+      flush();
+      send({ jsonrpc: "2.0", id: message.id, result: {} });
       return;
     case "session/prompt": {
       const sid = message.params.sessionId;
@@ -209,6 +221,40 @@ test("cursor: ACP handshake, model before `acp`, no TTY on stdin", SKIP, async (
   // Never an authenticate call: Cursor advertises no auth methods and the
   // credentials `cursor-agent login` wrote are reused as-is.
   assert.ok(!byMethod.has("authenticate"));
+});
+
+test("Hermes: ACP selects the requested model after session/new", SKIP, async () => {
+  const fake = session(FAKE_ACP, "fake-hermes");
+  const log = recorder();
+  const result = await runAcpSession({
+    provider: { key: "hermes", displayName: "Hermes Agent", executablePath: fake.path, signIn: "hermes setup" },
+    prompt: "run the makefaster loop",
+    cwd: fake.dir,
+    model: { id: "custom:local-model", label: "Custom Local Model" },
+    env: { ...process.env, FAKE_REPORT: fake.reportPath },
+    reporter: log.reporter,
+  });
+  assert.equal(result.exitCode, 0);
+  assert.equal(fake.read().selectedModel, "custom:local-model");
+  const methods = fake.read().frames.filter((frame) => frame.method).map((frame) => frame.method);
+  assert.deepEqual(methods.slice(0, 4), ["initialize", "session/new", "session/set_model", "session/prompt"]);
+});
+
+test("Hermes: ACP session inventory feeds the live model picker", SKIP, async () => {
+  const fake = session(FAKE_ACP, "fake-hermes-model-list");
+  const result = await listHermesModels({
+    provider: { key: "hermes", displayName: "Hermes Agent", executablePath: fake.path },
+    cwd: fake.dir,
+    env: { ...process.env, FAKE_REPORT: fake.reportPath },
+  });
+  assert.deepEqual(result, {
+    models: [
+      { id: "custom:local-model", displayName: "Custom Local Model" },
+      { id: "openai-api:gpt-5.6-sol", displayName: "OpenAI GPT-5.6 Sol" },
+    ],
+    authRequired: false,
+    detail: null,
+  });
 });
 
 test("cursor: a permission request is answered without a human, preferring a lasting grant", SKIP, async () => {
