@@ -134,6 +134,11 @@ createInterface({ input: process.stdin, terminal: false }).on("line", async (lin
       send({ jsonrpc: "2.0", id: message.id, result: {} });
       return;
     case "model/list":
+      // Real app-servers reject a request with no params object at all.
+      if (message.params === undefined) {
+        send({ jsonrpc: "2.0", id: message.id, error: { code: -32600, message: "Invalid request: missing field params" } });
+        return;
+      }
       send({ jsonrpc: "2.0", id: message.id, result: { data: [
         { id: "gpt-5.6-sol", model: "gpt-5.6-sol", displayName: "GPT-5.6-Sol", hidden: false },
         { id: "gpt-5.2", model: "gpt-5.2", displayName: "GPT-5.2", hidden: false },

@@ -252,10 +252,10 @@ The three CLIs do not share an id namespace, so the catalog does not either:
 | | Cursor | Claude Code | Codex |
 |---|---|---|---|
 | 1 | `claude-fable-5-thinking-medium` — 70.5 | `claude-fable-5` — 70.5 | `gpt-5.6-sol` — 67.2 |
-| 2 | `gpt-5.6-sol-medium` — 67.2 | `claude-opus-4-8[1m]` — 62.3 | `gpt-5.6-terra` — 64.9 |
-| 3 | `gpt-5.6-terra-medium` — 64.9 | `claude-sonnet-5` — 61.5 | `gpt-5.6-luna` — 61.1 |
-| 4 | `claude-opus-4-8-thinking-medium` — 62.3 | `claude-opus-5[1m]` — unranked | `gpt-5.5` — 58.4 |
-| 5 | `claude-sonnet-5-thinking-medium` — 61.5 | `claude-opus-4-7[1m]` — unranked | *live list only* |
+| 2 | `gpt-5.6-sol-medium` — 67.2 | `claude-opus-5-5[1m]` — unranked | `gpt-6.1-sol` — unranked |
+| 3 | `gpt-5.6-terra-medium` — 64.9 | `claude-fable-5-1` — unranked | `gpt-6-sol` — unranked |
+| 4 | `claude-opus-4-8-thinking-medium` — 62.3 | `claude-sonnet-5-5` — unranked | `gpt-6-astra` — unranked |
+| 5 | `claude-sonnet-5-thinking-medium` — 61.5 | `claude-opus-5[1m]` — unranked | `gpt-6-luna` — unranked |
 
 Cursor ids are **variants**: family plus reasoning effort plus an optional
 `-fast` twin, and bb's primaries pin medium. Claude Code ids carry **no effort
@@ -270,13 +270,15 @@ that pins a different one.
 Where makefaster can ask the CLI what the account can actually run, it does, and
 reconciles: `cursor-agent --list-models` for Cursor and `model/list` on the
 app-server for Codex. Ids the CLI does not list are dropped, so an account
-without Fable access is not offered Fable. Claude Code needs no probe — bb's
-curated catalog is already exactly the five rows its own catalog filters to.
+without Fable access is not offered Fable, and a Codex account without the
+GPT-6 families gets its five refilled from what it does list. Claude Code needs
+no probe: its five rows are the current Claude Code lineup.
 
-Only four OpenAI families are scored, so Codex shows four unless a live list
-supplies a fifth. Families the snapshot does not score — Opus 5 and Grok 4.6 are
-both newer than it — are offered but sort after every scored model and say they
-are absent from the snapshot, rather than being given an invented number. The
+Families the snapshot does not score — Opus 5.5, Fable 5.1, Sonnet 5.5, Opus 5,
+the GPT-6 families and Grok 4.6 are all newer than it — are offered but sort
+after every scored model and say they are absent from the snapshot, rather than
+being given an invented number. A point release such as `claude-fable-5-1` is
+not scored as its parent family. Any other id still works through `--model`. The
 catalog lives in [`packages/cli/lib/models.js`](packages/cli/lib/models.js).
 
 `--model` also accepts an id that is not in this table and passes it straight

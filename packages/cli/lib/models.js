@@ -80,13 +80,17 @@ export const FAMILY_BEST = new Map([
 
 /**
  * Longest-match family lookup, so `claude-opus-4-8-thinking-medium` does not
- * resolve through a shorter family that happens to be a substring.
+ * resolve through a shorter family that happens to be a substring. A family
+ * followed by another version number is a different model: `claude-fable-5-1`
+ * and `claude-sonnet-5-5` must not borrow Fable 5's or Sonnet 5's score.
  */
 export function benchmarkFamily(modelId) {
   const id = String(modelId).toLowerCase();
   let best = null;
   for (const family of FAMILY_BEST.keys()) {
-    if (id.includes(family) && (best === null || family.length > best.length)) best = family;
+    const at = id.indexOf(family);
+    if (at === -1 || /^[-.]\d/.test(id.slice(at + family.length))) continue;
+    if (best === null || family.length > best.length) best = family;
   }
   return best;
 }
@@ -114,22 +118,26 @@ const CANDIDATES = {
     { id: "claude-opus-5-thinking-medium", label: "Claude Opus 5 (thinking)" },
     { id: "cursor-grok-4.6-medium", label: "Cursor Grok 4.6" },
   ],
-  // bb's curated Claude Code catalog, exactly five rows. Opus 5 is bb's default
-  // but is not in the snapshot, so it cannot be ranked above Opus 4.8 here.
+  // The current Claude Code lineup, five rows. Opus 5.5, Fable 5.1, Sonnet 5.5
+  // and Opus 5 are newer than the snapshot, so they rank after Fable 5 rather
+  // than on a score they do not have. Older ids still work through --model.
   claude: [
+    { id: "claude-opus-5-5[1m]", label: "Opus 5.5 (1M)" },
+    { id: "claude-fable-5-1", label: "Fable 5.1" },
+    { id: "claude-sonnet-5-5", label: "Sonnet 5.5" },
     { id: "claude-fable-5", label: "Fable 5" },
     { id: "claude-opus-5[1m]", label: "Opus 5 (1M)" },
-    { id: "claude-opus-4-8[1m]", label: "Opus 4.8 (1M)" },
-    { id: "claude-sonnet-5", label: "Sonnet 5" },
-    { id: "claude-opus-4-7[1m]", label: "Opus 4.7 (1M)" },
   ],
-  // Only four OpenAI families are scored. A fifth is added from the live
-  // `model/list` when one is available — never invented.
+  // The GPT-6 families come from the app-server's own `model/list` and are
+  // newer than the snapshot, so they rank after GPT-5.6 Sol, the best scored
+  // one. An account without them gets them dropped and refilled from the live
+  // list — never invented.
   codex: [
+    { id: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
+    { id: "gpt-6-sol", label: "GPT-6 Sol" },
+    { id: "gpt-6-astra", label: "GPT-6 Astra" },
+    { id: "gpt-6-luna", label: "GPT-6 Luna" },
     { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
-    { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
-    { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
-    { id: "gpt-5.5", label: "GPT-5.5" },
   ],
 };
 
