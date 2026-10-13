@@ -186,7 +186,7 @@ export async function listCodexModels({ provider, cwd, env = process.env, timeou
   });
   try {
     await connection.request({ method: "initialize", params: INITIALIZE_PARAMS, timeoutMs });
-    const result = await connection.request({ method: "model/list", timeoutMs });
+    const result = await connection.request({ method: "model/list", params: {}, timeoutMs });
     const data = Array.isArray(result?.data) ? result.data : [];
     return data
       .filter((entry) => entry && typeof entry.model === "string" && entry.hidden !== true)

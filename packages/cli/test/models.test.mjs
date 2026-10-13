@@ -69,6 +69,11 @@ test("benchmarkFamily prefers the longest matching family", () => {
   assert.equal(benchmarkFamily("cursor-grok-4.6-medium"), null);
   assert.equal(benchmarkFamily("gpt-5.2"), null);
   assert.equal(benchmarkScore("gpt-5.2"), null);
+  // A newer point release is not its parent family.
+  assert.equal(benchmarkFamily("claude-fable-5-1"), null);
+  assert.equal(benchmarkFamily("claude-sonnet-5-5"), null);
+  assert.equal(benchmarkFamily("claude-opus-5-5[1m]"), null);
+  assert.equal(benchmarkFamily("gpt-5.6-sol-2"), null);
 });
 
 test("no provider offers more than five, and none offers a duplicate", () => {
@@ -110,29 +115,29 @@ test("Cursor offers the snapshot's top five families as effort variants", () => 
   for (const model of modelsForProvider("cursor")) assert.notEqual(model.id, "claude-opus-5-thinking-medium");
 });
 
-test("Claude Code is bb's curated five: three ranked, two unranked", () => {
+test("Claude Code offers the current five: Fable 5 ranked, the newer four unranked", () => {
   const models = modelsForProvider("claude");
   assert.equal(models.length, 5);
   assert.deepEqual(models.map((m) => m.id), [
     "claude-fable-5",
-    "claude-opus-4-8[1m]",
-    "claude-sonnet-5",
+    "claude-opus-5-5[1m]",
+    "claude-fable-5-1",
+    "claude-sonnet-5-5",
     "claude-opus-5[1m]",
-    "claude-opus-4-7[1m]",
   ]);
-  assert.deepEqual(models.map((m) => m.score), [70.5, 62.3, 61.5, null, null]);
+  assert.deepEqual(models.map((m) => m.score), [70.5, null, null, null, null]);
   for (const model of models) assert.match(model.id, /^claude-/);
   // Claude ids carry no effort suffix — reasoning is a separate field — and a
   // bracketed context parameter is part of the id.
   for (const model of models) assert.doesNotMatch(model.id, /-(?:low|medium|high|xhigh|max)$/);
   assert.ok(models.some((m) => m.id.includes("[1m]")));
-  for (const model of models.slice(3)) assert.match(model.detail, /not in the CursorBench 3\.2 snapshot/);
+  for (const model of models.slice(1)) assert.match(model.detail, /not in the CursorBench 3\.2 snapshot/);
 });
 
-test("Codex shows the four scored families and does not invent a fifth", () => {
+test("Codex leads with its best scored family, then the unscored GPT-6 families", () => {
   const models = modelsForProvider("codex");
-  assert.deepEqual(models.map((m) => m.id), ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"]);
-  assert.deepEqual(models.map((m) => m.score), [67.2, 64.9, 61.1, 58.4]);
+  assert.deepEqual(models.map((m) => m.id), ["gpt-5.6-sol", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-astra", "gpt-6-luna"]);
+  assert.deepEqual(models.map((m) => m.score), [67.2, null, null, null, null]);
   for (const model of models) assert.match(model.id, /^gpt-/);
 });
 
@@ -164,8 +169,9 @@ test("a live list drops catalog ids the account cannot run", () => {
 });
 
 test("an empty live list is treated as no answer, not as no models", () => {
-  assert.deepEqual(modelsForProvider("codex", { live: [] }).map((m) => m.id), ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"]);
-  assert.deepEqual(modelsForProvider("codex", { live: null }).map((m) => m.id), ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"]);
+  const catalog = ["gpt-5.6-sol", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-astra", "gpt-6-luna"];
+  assert.deepEqual(modelsForProvider("codex", { live: [] }).map((m) => m.id), catalog);
+  assert.deepEqual(modelsForProvider("codex", { live: null }).map((m) => m.id), catalog);
 });
 
 test("the score is labelled as the family's best, not as this variant's own", () => {
